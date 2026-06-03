@@ -1,0 +1,1870 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LADDER.planner — Futures Risk-Equalized Allocation</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #1a1f26; }
+    input[type="number"]::-webkit-inner-spin-button,
+    input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+    input[type="number"] { -moz-appearance: textfield; }
+    .lp-input:focus { outline: none; border-color: #4a90c2 !important; background: #1a1f26 !important; }
+    .lp-btn:hover:not(:disabled) { border-color: #4a90c2 !important; color: #4a90c2 !important; }
+    .lp-pill:hover { border-color: #4a90c2 !important; }
+    .lp-ladder-row:hover { background: #2d3540 !important; }
+    .lp-action-btn:hover { background: #4a90c2 !important; color: #1a1f26 !important; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useMemo, useEffect, useRef } = React;
+
+    // =========================================================================
+    // PRODUCT REFERENCE DATA
+    // =========================================================================
+    const PRODUCTS = {
+      SR3: { exchange: "CME",   pointValue: 25.00,  tickSize: 0.005, tickValue: 12.5,   currency: "USD", fxRate: 1.0,     usdTickValue: 12.5 },
+      SR1: { exchange: "CME",   pointValue: 25.00,  tickSize: 0.005, tickValue: 12.5,   currency: "USD", fxRate: 1.0,     usdTickValue: 12.5 },
+      ZQ:  { exchange: "CBOT",  pointValue: 41.67,  tickSize: 0.005, tickValue: 20.835, currency: "USD", fxRate: 1.0,     usdTickValue: 20.835 },
+      I:   { exchange: "ICE_L", pointValue: 2500.0, tickSize: 0.005, tickValue: 12.5,   currency: "EUR", fxRate: 1.15402, usdTickValue: 14.42525 },
+      SO3: { exchange: "ICE_L", pointValue: 2500.0, tickSize: 0.005, tickValue: 12.5,   currency: "GBP", fxRate: 1.32315, usdTickValue: 16.539375 },
+      SA3: { exchange: "ICE_L", pointValue: 2500.0, tickSize: 0.005, tickValue: 12.5,   currency: "CHF", fxRate: 1.25213, usdTickValue: 15.651625 },
+    };
+
+    // =========================================================================
+    // CORE MATH
+    // =========================================================================
+    function buildLevels(start, end, interval) {
+      if (!isFinite(start) || !isFinite(end) || !isFinite(interval) || interval <= 0) return [];
+      const levels = [];
+      const dir = end >= start ? 1 : -1;
+      const step = Math.abs(interval) * dir;
+      let p = start;
+      const maxLevels = 500;
+      while (levels.length < maxLevels) {
+        levels.push(roundPrice(p));
+        const next = p + step;
+        if ((dir > 0 && next > end) || (dir < 0 && next < end)) break;
+        p = next;
+        if (Math.abs(p - end) < 1e-9) break;
+      }
+      const last = levels[levels.length - 1];
+      if (Math.abs(last - end) > 1e-9) levels.push(roundPrice(end));
+      const seen = new Set();
+      return levels.filter((x) => {
+        const k = x.toFixed(6);
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      });
+    }
+
+    function roundPrice(x) {
+      return Math.round(x * 1e8) / 1e8;
+    }
+
+    function riskAtLevel(lots, entry, stop, tickSize, usdTickValue) {
+      const ticks = Math.abs(entry - stop) / tickSize;
+      return lots * ticks * usdTickValue;
+    }
+
+    function ticksToStop(levels, stop, tickSize) {
+      return levels.map((p) => Math.abs(p - stop) / tickSize);
+    }
+
+    function solveIntegerLots(weights, costPerLot, usdTickValue, targetRisk) {
+      if (!weights.length) return [];
+      const perLotUSD = costPerLot.map((t) => t * usdTickValue);
+      const totalWeight = weights.reduce((a, b) => a + b, 0);
+      if (totalWeight === 0) return weights.map(() => 0);
+      const denom = weights.reduce((s, w, i) => s + w * perLotUSD[i], 0);
+      if (denom === 0) return weights.map(() => 0);
+      let k = targetRisk / denom;
+      const roundLots = (kk) => weights.map((w) => Math.max(0, Math.round(kk * w)));
+      const totalRisk = (lots) => lots.reduce((s, l, i) => s + l * perLotUSD[i], 0);
+      let best = roundLots(k);
+      let bestDiff = Math.abs(totalRisk(best) - targetRisk);
+      for (let mult = 0.85; mult <= 1.15; mult += 0.01) {
+        const cand = roundLots(k * mult);
+        const d = Math.abs(totalRisk(cand) - targetRisk);
+        if (d < bestDiff) { best = cand; bestDiff = d; }
+      }
+      if (best.every((l) => l === 0) && targetRisk > 0) {
+        let cheapestIdx = 0;
+        for (let i = 1; i < perLotUSD.length; i++) {
+          if (perLotUSD[i] > 0 && perLotUSD[i] < perLotUSD[cheapestIdx]) cheapestIdx = i;
+        }
+        best[cheapestIdx] = 1;
+      }
+      return best;
+    }
+
+    function solveBestRR(weights, costPerLot, rewardPerLot, usdTickValue, targetRisk, tolerancePct) {
+      if (!weights.length) return [];
+      const perLotRisk = costPerLot.map((t) => t * usdTickValue);
+      const maxRisk = targetRisk * (1 + tolerancePct / 100);
+      let lots = solveIntegerLots(weights, costPerLot, usdTickValue, targetRisk);
+      const totalRisk = () => lots.reduce((s, l, i) => s + l * perLotRisk[i], 0);
+      const totalReward = () => lots.reduce((s, l, i) => s + l * rewardPerLot[i], 0);
+      const efficiency = rewardPerLot.map((r, i) => perLotRisk[i] > 0 ? r / perLotRisk[i] : 0);
+      const maxIter = 200;
+      for (let iter = 0; iter < maxIter; iter++) {
+        let improved = false;
+        const addOrder = efficiency.map((e, i) => ({ e, i })).sort((a, b) => b.e - a.e);
+        for (const { i } of addOrder) {
+          if (totalRisk() + perLotRisk[i] <= maxRisk) { lots[i] += 1; improved = true; break; }
+        }
+        if (improved) continue;
+        const candidatesOut = efficiency.map((e, i) => ({ e, i, lots: lots[i] })).filter((x) => x.lots > 0).sort((a, b) => a.e - b.e);
+        let swapped = false;
+        for (const out of candidatesOut) {
+          for (const inn of addOrder) {
+            if (inn.i === out.i) continue;
+            if (inn.e <= out.e) break;
+            const newRisk = totalRisk() - perLotRisk[out.i] + perLotRisk[inn.i];
+            if (newRisk <= maxRisk) {
+              const gain = rewardPerLot[inn.i] - rewardPerLot[out.i];
+              if (gain > 1e-9) { lots[out.i] -= 1; lots[inn.i] += 1; swapped = true; break; }
+            }
+          }
+          if (swapped) break;
+        }
+        if (!swapped) break;
+      }
+      return lots;
+    }
+
+    function equalWeights(n) { return Array(n).fill(1); }
+    function frontWeights(n) { return Array.from({ length: n }, (_, i) => n - i); }
+    function backWeights(n)  { return Array.from({ length: n }, (_, i) => i + 1); }
+
+    function computeModel(levels, lots, stop, tp, tickSize, usdTickValue, targetRisk, tolerancePct) {
+      const perLevelRisk = levels.map((p, i) => riskAtLevel(lots[i] || 0, p, stop, tickSize, usdTickValue));
+      const perLevelReward = levels.map((p, i) => {
+        const ticks = (tp - p) / tickSize;
+        return (lots[i] || 0) * ticks * usdTickValue;
+      });
+      const totalLots = lots.reduce((a, b) => a + b, 0);
+      const totalRisk = perLevelRisk.reduce((a, b) => a + b, 0);
+      const signedReward = perLevelReward.reduce((a, b) => a + b, 0);
+      const totalReward = Math.abs(signedReward);
+      const rewardSign = Math.sign(signedReward);
+      const avgEntry = totalLots > 0 ? levels.reduce((s, p, i) => s + p * (lots[i] || 0), 0) / totalLots : NaN;
+      const deviation = targetRisk > 0 ? ((totalRisk - targetRisk) / targetRisk) * 100 : 0;
+      const withinTol = Math.abs(deviation) <= tolerancePct;
+      const rr = totalRisk > 0 ? totalReward / totalRisk : 0;
+      return { perLevelRisk, perLevelReward, totalLots, totalRisk, totalReward, rewardSign, avgEntry, deviation, withinTol, rr };
+    }
+
+    // =========================================================================
+    // MAIN COMPONENT
+    // =========================================================================
+    function FuturesLadderPlanner() {
+      const [product, setProduct] = useState("SR3");
+      const [direction, setDirection] = useState("Buy");
+      const [startPrice, setStartPrice] = useState(-0.065);
+      const [endPrice, setEndPrice] = useState(-0.075);
+      const [stopPrice, setStopPrice] = useState(-0.0775);
+      const [tpPrice, setTpPrice] = useState(-3.0);
+      const [tpManual, setTpManual] = useState(false);
+      const [targetReward, setTargetReward] = useState(3000);
+      const [interval, setInterval] = useState(1.0);
+      const [targetRisk, setTargetRisk] = useState(1500);
+      const [tolerance, setTolerance] = useState(10);
+      const [solverMode, setSolverMode] = useState("exact");
+      const [volatility, setVolatility] = useState("medium");
+      const [manualLots, setManualLots] = useState([]);
+      const [prompt, setPrompt] = useState("");
+      const [promptBusy, setPromptBusy] = useState(false);
+      const [promptError, setPromptError] = useState("");
+
+      const p = PRODUCTS[product];
+      const VOL_MULT = { low: 1, medium: 2, high: 4 };
+
+      const matchedVol = useMemo(() => {
+        const closeTo = (a, b) => Math.abs(a - b) < 1e-9;
+        for (const [v, m] of Object.entries(VOL_MULT)) {
+          if (closeTo(interval, p.tickSize * m)) return v;
+        }
+        return null;
+      }, [interval, p.tickSize]);
+
+      function pickVolatility(v) {
+        setVolatility(v);
+        setInterval(p.tickSize * VOL_MULT[v]);
+      }
+
+      useEffect(() => {
+        setInterval(p.tickSize * VOL_MULT[volatility]);
+      }, [product]);
+
+      const levels = useMemo(() => buildLevels(startPrice, endPrice, interval), [startPrice, endPrice, interval]);
+      const costPerLot = useMemo(() => ticksToStop(levels, stopPrice, p.tickSize), [levels, stopPrice, p.tickSize]);
+      const rewardPerLot = useMemo(() => levels.map((pr) => Math.abs(pr - tpPrice) / p.tickSize * p.usdTickValue), [levels, tpPrice, p.tickSize, p.usdTickValue]);
+
+      useEffect(() => {
+        setManualLots((prev) => {
+          const next = Array(levels.length).fill(0);
+          for (let i = 0; i < Math.min(prev.length, levels.length); i++) next[i] = prev[i];
+          if (prev.length === 0 && levels.length > 0) {
+            const w = equalWeights(levels.length);
+            return solveIntegerLots(w, costPerLot, p.usdTickValue, targetRisk);
+          }
+          return next;
+        });
+      }, [levels.length]);
+
+      function solveFor(weights, { allowRR = true } = {}) {
+        if (solverMode === "bestRR" && allowRR) {
+          return solveBestRR(weights, costPerLot, rewardPerLot, p.usdTickValue, targetRisk, tolerance);
+        }
+        return solveIntegerLots(weights, costPerLot, p.usdTickValue, targetRisk);
+      }
+
+      const equalLots = useMemo(() => solveFor(equalWeights(levels.length), { allowRR: false }), [levels, costPerLot, p.usdTickValue, targetRisk, tolerance]);
+      const frontLots = useMemo(() => solveFor(frontWeights(levels.length)), [levels, costPerLot, rewardPerLot, p.usdTickValue, targetRisk, tolerance, solverMode]);
+      const backLots  = useMemo(() => solveFor(backWeights(levels.length)),  [levels, costPerLot, rewardPerLot, p.usdTickValue, targetRisk, tolerance, solverMode]);
+
+      function computeAutoTPFor(modelLots) {
+        const totalLots = modelLots.reduce((a, b) => a + b, 0);
+        if (totalLots === 0 || targetReward <= 0) return null;
+        const avgEntry = levels.reduce((s, pr, i) => s + pr * (modelLots[i] || 0), 0) / totalLots;
+        const tpTicks = targetReward / (totalLots * p.usdTickValue);
+        const tpOffset = tpTicks * p.tickSize;
+        const raw = direction === "Buy" ? avgEntry + tpOffset : avgEntry - tpOffset;
+        const rounded = Math.round(raw / p.tickSize) * p.tickSize;
+        return Math.round(rounded * 1e8) / 1e8;
+      }
+
+      useEffect(() => {
+        if (!tpManual) {
+          const t = computeAutoTPFor(equalLots);
+          if (t != null && isFinite(t) && t !== tpPrice) setTpPrice(t);
+        }
+      }, [equalLots, levels, targetReward, p.usdTickValue, p.tickSize, direction, tpManual]);
+
+      const [activeTab, setActiveTab] = useState("entry");
+      const [exitMode, setExitMode] = useState("direct");
+      const [rtSpacingTicks, setRtSpacingTicks] = useState(2);
+      const [rtLots, setRtLots] = useState(2);
+
+      function avgEntryFor(lots) {
+        const total = lots.reduce((a, b) => a + b, 0);
+        if (total === 0) return null;
+        return levels.reduce((s, pr, i) => s + pr * (lots[i] || 0), 0) / total;
+      }
+
+      const models = [
+        { name: "EQUAL",        subtitle: "Flat across ladder",        lots: equalLots,  hint: "Neutral baseline",              autoTP: computeAutoTPFor(equalLots),  avgEntryCache: avgEntryFor(equalLots) },
+        { name: "FRONT-LOADED", subtitle: "Heavier near first entry",  lots: frontLots,  hint: "Higher urgency / conviction",   autoTP: computeAutoTPFor(frontLots),  avgEntryCache: avgEntryFor(frontLots) },
+        { name: "BACK-LOADED",  subtitle: "Heavier deeper in ladder",  lots: backLots,   hint: "Better avg, accepts underfill", autoTP: computeAutoTPFor(backLots),   avgEntryCache: avgEntryFor(backLots) },
+        { name: "MANUAL",       subtitle: "User-defined distribution", lots: manualLots, hint: "Discretionary override", editable: true, autoTP: computeAutoTPFor(manualLots), avgEntryCache: avgEntryFor(manualLots) },
+      ];
+
+      // ── API KEYS — update these when tokens expire ────────────────────────
+      const ANTHROPIC_KEY = "YOUR_ANTHROPIC_API_KEY_HERE";
+      const QH_TOKEN      = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoyMDk0NDYyNTc0LCJpYXQiOjE3NzkxMDI1NzQsImp0aSI6IjdjN2QzNmE0NDdmMTRjZjg4ZTA3NDY0MDJlNTJmMWQ3IiwidXNlcl9pZCI6NDk2fQ.3UyO5rzFSmoky1L9dTWd25LX2VNWMDvulbwc1wQhZdI";
+      const QH_BASE       = "https://qh-api.corp.hertshtengroup.com";
+      const QH_CODE_MAP   = { SR3:"SRA", SR1:"S1R", ZQ:"FF", I:"ER", SO3:"SON", SA3:"FSR" };
+      // ─────────────────────────────────────────────────────────────────────
+
+      // Market data state
+      const [mktData, setMktData] = useState(null);
+      const [mktLoading, setMktLoading] = useState(false);
+      const [mktError, setMktError] = useState("");
+
+      function computeATR(candles, period) {
+        if (candles.length < 2) return null;
+        const trs = [];
+        for (let i = 1; i < candles.length; i++) {
+          const h = candles[i].high ?? candles[i].h ?? 0;
+          const l = candles[i].low  ?? candles[i].l ?? 0;
+          const cp = candles[i-1].close ?? candles[i-1].c ?? 0;
+          trs.push(Math.max(h - l, Math.abs(h - cp), Math.abs(l - cp)));
+        }
+        const slice = trs.slice(-period);
+        return slice.length ? slice.reduce((a,b)=>a+b,0) / slice.length : null;
+      }
+
+      function computeVol(candles, period) {
+        const closes = candles.map(c => c.close ?? c.c ?? 0).filter(Boolean);
+        if (closes.length < 2) return null;
+        const slice = closes.slice(-(period+1));
+        const rets = [];
+        for (let i = 1; i < slice.length; i++) rets.push(Math.log(slice[i]/slice[i-1]));
+        if (!rets.length) return null;
+        const mean = rets.reduce((a,b)=>a+b,0)/rets.length;
+        const variance = rets.reduce((a,b)=>a+(b-mean)**2, 0)/rets.length;
+        return Math.sqrt(variance) * Math.sqrt(252);
+      }
+
+      function extractCandles(data) {
+        if (Array.isArray(data)) return data;
+        if (data && Array.isArray(data.results)) return data.results;
+        if (data && typeof data === "object") {
+          for (const val of Object.values(data)) {
+            if (Array.isArray(val) && val.length) return val;
+          }
+        }
+        return [];
+      }
+
+      async function fetchMarketData(productCode) {
+        setMktLoading(true); setMktError("");
+        const qhCode = QH_CODE_MAP[productCode];
+        if (!qhCode) { setMktLoading(false); return null; }
+        try {
+          const r = await fetch(
+            `${QH_BASE}/api/v2/ohlc/?instruments=${qhCode}&interval=1D&count=25`,
+            { headers: { "Authorization": `Bearer ${QH_TOKEN}` } }
+          );
+          if (!r.ok) throw new Error(`QH API ${r.status}`);
+          const raw = await r.json();
+          const candles = extractCandles(raw);
+          if (!candles.length) throw new Error("No candle data");
+
+          // sort ascending by time
+          const sorted = [...candles].sort((a,b) => {
+            const ta = a.datetime ?? a.time ?? a.t ?? 0;
+            const tb = b.datetime ?? b.time ?? b.t ?? 0;
+            return ta < tb ? -1 : 1;
+          });
+
+          const last     = sorted[sorted.length - 1];
+          const lastPrice   = last.close ?? last.c ?? null;
+          const sessionHigh = last.high  ?? last.h ?? null;
+          const sessionLow  = last.low   ?? last.l ?? null;
+          const atr10  = computeATR(sorted, 10);
+          const atr20  = computeATR(sorted, 20);
+          const vol20  = computeVol(sorted, 20);
+          const volRegime = vol20 == null ? "medium" : vol20 < 0.08 ? "low" : vol20 > 0.20 ? "high" : "medium";
+
+          const result = { contract: productCode, qhCode, lastPrice, sessionHigh, sessionLow, atr10, atr20, realisedVol: vol20, volRegime };
+          setMktData(result);
+          return result;
+        } catch (e) {
+          setMktError("Market data error: " + e.message);
+          setMktData(null); return null;
+        } finally { setMktLoading(false); }
+      }
+
+      useEffect(() => { fetchMarketData(product); }, [product]);
+
+      async function handlePrompt() {
+        if (!prompt.trim()) return;
+        setPromptBusy(true); setPromptError("");
+        try {
+          const mkt = await fetchMarketData(product);
+          const pc = PRODUCTS[product];
+          const mktCtx = mkt
+            ? `LIVE DATA for ${product}: last=${mkt.lastPrice}, high=${mkt.sessionHigh}, low=${mkt.sessionLow}, atr10=${mkt.atr10?.toFixed(4)}, atr20=${mkt.atr20?.toFixed(4)}, rvol20=${mkt.realisedVol ? (mkt.realisedVol*100).toFixed(1)+"%" : "n/a"}, regime=${mkt.volRegime}, tick=${pc.tickSize}`
+            : `No live data for ${product}. tick=${pc.tickSize}`;
+
+          const system = `You are a trade structuring assistant. Parse the prompt and output ONLY valid JSON — no markdown, no text.
+${mktCtx}
+Rules: Products: SR3,SR1,ZQ,I,SO3,SA3. Prices are 100-minus-rate, negatives normal. Use lastPrice if startPrice not given. Suggest stop at lastPrice ± 1.5×atr10 (minus for Buy, plus for Sell). Suggest TP from stop distance × RR if given. interval = atr10/4 rounded to tick if not given. direction = "Buy" or "Sell" only.
+Output: { "product":string, "direction":"Buy"|"Sell", "startPrice":number, "endPrice":number, "stopPrice":number, "tpPrice":number, "interval":number, "targetRisk":number, "targetReward":number, "volatility":"low"|"medium"|"high" }
+Only include fields you are confident about.`;
+
+          const res = await fetch("https://api.anthropic.com/v1/messages", {
+            method: "POST",
+            headers: { "Content-Type":"application/json", "x-api-key": ANTHROPIC_KEY, "anthropic-version":"2023-06-01" },
+            body: JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:400, system, messages:[{ role:"user", content:prompt }] }),
+          });
+          const data = await res.json();
+          const text = (data.content||[]).filter(c=>c.type==="text").map(c=>c.text).join("");
+          const parsed = JSON.parse(text.replace(/```json|```/g,"").trim());
+
+          if (parsed.product && PRODUCTS[parsed.product]) setProduct(parsed.product);
+          if (parsed.direction)      setDirection(parsed.direction);
+          if (parsed.startPrice  != null) setStartPrice(parsed.startPrice);
+          if (parsed.endPrice    != null) setEndPrice(parsed.endPrice);
+          if (parsed.stopPrice   != null) setStopPrice(parsed.stopPrice);
+          if (parsed.tpPrice     != null) { setTpPrice(parsed.tpPrice); setTpManual(true); }
+          if (parsed.interval    != null) setInterval(parsed.interval);
+          if (parsed.targetRisk  != null) setTargetRisk(parsed.targetRisk);
+          if (parsed.targetReward != null) setTargetReward(parsed.targetReward);
+          if (parsed.volatility)          setVolatility(parsed.volatility);
+        } catch(e) {
+          setPromptError("Error: " + e.message);
+        } finally { setPromptBusy(false); }
+      }
+
+      return (
+        <div style={styles.root}>
+          <Header product={product} p={p} direction={direction} />
+          {/* Market Data Bar */}
+          <div style={{ display:"flex", alignItems:"center", gap:16, padding:"6px 16px", background:"#1a1f26", borderBottom:"1px solid #2d3540", flexWrap:"wrap" }}>
+            {mktLoading && <span style={{ fontSize:10, color:"#7a8490", fontFamily:"monospace" }}>⟳ fetching market data…</span>}
+            {mktError  && <span style={{ fontSize:10, color:"#d4a853", fontFamily:"monospace" }}>⚠ {mktError}</span>}
+            {mktData && !mktLoading && [
+              { label:"LAST",    val: mktData.lastPrice   != null ? mktData.lastPrice.toFixed(4)   : "—" },
+              { label:"HIGH",    val: mktData.sessionHigh != null ? mktData.sessionHigh.toFixed(4) : "—" },
+              { label:"LOW",     val: mktData.sessionLow  != null ? mktData.sessionLow.toFixed(4)  : "—" },
+              { label:"ATR10",   val: mktData.atr10       != null ? mktData.atr10.toFixed(4)       : "—" },
+              { label:"RVOL20",  val: mktData.realisedVol != null ? (mktData.realisedVol*100).toFixed(1)+"%" : "—" },
+              { label:"REGIME",  val: (mktData.volRegime || "—").toUpperCase() },
+            ].map(({ label, val }) => (
+              <div key={label} style={{ display:"flex", flexDirection:"column", gap:1 }}>
+                <span style={{ fontSize:8, color:"#7a8490", letterSpacing:"0.1em", fontFamily:"monospace" }}>{label}</span>
+                <span style={{ fontSize:12, fontWeight:700, color:"#e8ebef", fontFamily:"monospace" }}>{val}</span>
+              </div>
+            ))}
+            {mktData && !mktLoading && (
+              <button onClick={() => fetchMarketData(product)} style={{ marginLeft:"auto", background:"transparent", border:"1px solid #2d3540", color:"#7a8490", fontSize:9, padding:"3px 8px", borderRadius:3, cursor:"pointer", fontFamily:"monospace" }}>↺ REFRESH</button>
+            )}
+          </div>
+          <div style={styles.body}>
+            {/* LEFT: INPUT COLUMN */}
+            <div style={styles.leftCol}>
+              <PromptBar prompt={prompt} setPrompt={setPrompt} onApply={handlePrompt} busy={promptBusy} error={promptError} />
+
+              <Section title="DIRECTION">
+                <div style={styles.dirRow}>
+                  {["Buy", "Sell"].map((d) => {
+                    const active = direction === d;
+                    const dirColor = d === "Buy" ? "#5fb878" : "#d66868";
+                    return (
+                      <button key={d} onClick={() => setDirection(d)} className="lp-btn" style={{
+                        ...styles.dirBtn,
+                        color: active ? dirColor : "#d4d8dd",
+                        borderColor: active ? dirColor : "#2d3540",
+                        backgroundColor: active ? (d === "Buy" ? "rgba(95, 184, 120, 0.08)" : "rgba(214, 104, 104, 0.08)") : "transparent",
+                      }}>
+                        {d.toUpperCase()}
+                      </button>
+                    );
+                  })}
+                </div>
+              </Section>
+
+              <Section title="PRODUCT">
+                <div style={styles.productGrid}>
+                  {Object.keys(PRODUCTS).map((code) => (
+                    <button key={code} onClick={() => setProduct(code)} className="lp-pill" style={{
+                      ...styles.productPill,
+                      background: product === code ? "#1a2329" : "transparent",
+                      borderColor: product === code ? "#4a90c2" : "#2d3540",
+                      color: product === code ? "#4a90c2" : "#d4d8dd",
+                    }}>
+                      <div style={{ fontWeight: 700, fontSize: 13 }}>{code}</div>
+                      <div style={styles.pillSub}>{PRODUCTS[code].exchange}</div>
+                    </button>
+                  ))}
+                </div>
+              </Section>
+
+              <Section title="CONTRACT SPECS">
+                <div style={styles.specGrid}>
+                  <Spec label="Tick Size" value={p.tickSize} />
+                  <Spec label="Tick Value" value={`${p.currency} ${p.tickValue}`} />
+                  <Spec label="FX Rate" value={p.fxRate.toFixed(5)} />
+                  <Spec label="USD Tick Value" value={`$${p.usdTickValue.toFixed(4)}`} highlight />
+                </div>
+              </Section>
+
+              <Section title={`VOLATILITY${matchedVol === null ? " · CUSTOM" : ""}`}>
+                <div style={styles.volGrid}>
+                  {[
+                    { id: "low",    label: "LOW",    sub: `every tick (${p.tickSize})` },
+                    { id: "medium", label: "MEDIUM", sub: `every 2nd (${(p.tickSize * 2).toFixed(p.tickSize < 0.01 ? 3 : 2)})` },
+                    { id: "high",   label: "HIGH",   sub: `every 4th (${(p.tickSize * 4).toFixed(p.tickSize < 0.01 ? 3 : 2)})` },
+                  ].map((v) => {
+                    const active = matchedVol === v.id;
+                    return (
+                      <button key={v.id} onClick={() => pickVolatility(v.id)} className="lp-btn" style={{
+                        ...styles.volBtn,
+                        background: active ? "rgba(74, 144, 194, 0.08)" : "transparent",
+                        color: active ? "#4a90c2" : "#d4d8dd",
+                        borderColor: active ? "#4a90c2" : "#2d3540",
+                      }}>
+                        <div style={{ fontWeight: 700, fontSize: 11, letterSpacing: "0.08em" }}>{v.label}</div>
+                        <div style={{ fontSize: 9, opacity: 0.75, marginTop: 2, fontFamily: "JetBrains Mono, monospace" }}>{v.sub}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </Section>
+
+              <Section title="PRICES">
+                <div style={styles.inputGrid}>
+                  <NumInput label="Start" value={startPrice} onChange={setStartPrice} step={p.tickSize} />
+                  <NumInput label="End" value={endPrice} onChange={setEndPrice} step={p.tickSize} />
+                  <NumInput label="Stop" value={stopPrice} onChange={setStopPrice} step={p.tickSize} />
+                  <NumInput
+                    label={tpManual ? "Take Profit · MANUAL" : "Take Profit · AUTO"}
+                    value={tpPrice}
+                    onChange={(v) => { setTpPrice(v); setTpManual(true); }}
+                    step={p.tickSize}
+                    rightAction={tpManual ? { label: "AUTO", onClick: () => setTpManual(false) } : null}
+                  />
+                  <NumInput label="Interval" value={interval} onChange={setInterval} step={p.tickSize} min={p.tickSize} />
+                </div>
+              </Section>
+
+              <Section title="RISK / REWARD">
+                <div style={styles.inputGrid}>
+                  <NumInput label="Target Risk ($)" value={targetRisk} onChange={setTargetRisk} step={50} min={0} />
+                  <NumInput label="Target Reward ($)" value={targetReward} onChange={setTargetReward} step={50} min={0} />
+                  <NumInput label="Tolerance (%)" value={tolerance} onChange={setTolerance} step={1} min={0} max={50} />
+                  <div style={styles.rrInfo}>
+                    <div style={styles.numLabelText}>TARGET RR</div>
+                    <div style={styles.rrValue}>{targetRisk > 0 ? (targetReward / targetRisk).toFixed(2) : "—"}:1</div>
+                  </div>
+                </div>
+              </Section>
+
+              <Section title="SOLVER MODE">
+                <div style={styles.dirRow}>
+                  {[
+                    { id: "exact",  label: "EXACT RISK", hint: "Hit target risk" },
+                    { id: "bestRR", label: "BEST RR",    hint: "Max reward in budget" },
+                  ].map((m) => (
+                    <button key={m.id} onClick={() => setSolverMode(m.id)} className="lp-btn" style={{
+                      ...styles.solverBtn,
+                      background: solverMode === m.id ? "rgba(74, 144, 194, 0.08)" : "transparent",
+                      color: solverMode === m.id ? "#4a90c2" : "#d4d8dd",
+                      borderColor: solverMode === m.id ? "#4a90c2" : "#2d3540",
+                    }}>
+                      <div style={{ fontWeight: 700, fontSize: 11, letterSpacing: "0.08em" }}>{m.label}</div>
+                      <div style={{ fontSize: 9, opacity: 0.7, marginTop: 2, letterSpacing: 0 }}>{m.hint}</div>
+                    </button>
+                  ))}
+                </div>
+              </Section>
+            </div>
+
+            {/* RIGHT: TABBED PANEL */}
+            <div style={styles.rightCol}>
+              <div style={exitStyles.tabBar}>
+                {["entry", "exit", "market"].map((tab) => (
+                  <button key={tab} onClick={() => setActiveTab(tab)} style={{
+                    ...exitStyles.tabBtn,
+                    borderBottom: activeTab === tab ? "2px solid #4a90c2" : "2px solid transparent",
+                    color: activeTab === tab ? "#e8ebef" : "#7a8490",
+                    fontWeight: activeTab === tab ? 700 : 400,
+                  }}>
+                    {tab === "entry" ? "ENTRY PLAN" : tab === "exit" ? "EXIT PLAN" : "MARKET DATA"}
+                  </button>
+                ))}
+              </div>
+
+              {activeTab === "market" && (
+                <MarketGrid qhBase={QH_BASE} qhToken={QH_TOKEN} />
+              )}
+
+              {activeTab === "entry" && models.map((m) => {
+                const effectiveTP = tpManual ? tpPrice : (m.autoTP ?? tpPrice);
+                return (
+                  <ModelCard
+                    key={m.name} model={m} levels={levels} stopPrice={stopPrice} tpPrice={effectiveTP}
+                    tpIsAuto={!tpManual} tickSize={p.tickSize} usdTickValue={p.usdTickValue}
+                    targetRisk={targetRisk} targetReward={targetReward} tolerance={tolerance}
+                    direction={direction}
+                    onChangeLot={(idx, val) => {
+                      if (!m.editable) return;
+                      setManualLots((prev) => {
+                        const copy = [...prev];
+                        while (copy.length < levels.length) copy.push(0);
+                        copy[idx] = Math.max(0, Math.floor(val || 0));
+                        return copy;
+                      });
+                    }}
+                    onResetManual={() => setManualLots(equalLots)}
+                  />
+                );
+              })}
+
+              {activeTab === "exit" && (
+                <ExitPlanner
+                  models={models} direction={direction} stopPrice={stopPrice}
+                  tpManual={tpManual} tpPrice={tpPrice} tickSize={p.tickSize} usdTickValue={p.usdTickValue}
+                  exitMode={exitMode} setExitMode={setExitMode}
+                  rtSpacingTicks={rtSpacingTicks} setRtSpacingTicks={setRtSpacingTicks}
+                  rtLots={rtLots} setRtLots={setRtLots}
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // =========================================================================
+    // SUBCOMPONENTS
+    // =========================================================================
+    function Header({ product, p, direction }) {
+      return (
+        <div style={styles.header}>
+          <div style={styles.headerLeft}>
+            <div style={styles.logo}>
+              <span style={{ color: "#4a90c2" }}>▮</span>LADDER<span style={{ color: "#7a8490", fontWeight: 400 }}>.planner</span>
+            </div>
+            <div style={styles.headerMeta}>FUTURES · RISK-EQUALIZED ALLOCATION · ANALYSIS MODE</div>
+          </div>
+          <div style={styles.headerRight}>
+            <div style={styles.headerStat}>
+              <div style={styles.headerStatLabel}>ACTIVE</div>
+              <div style={styles.headerStatValue}>
+                <span style={{ color: direction === "Buy" ? "#5fb878" : "#d66868" }}>{direction.toUpperCase()}</span>{" "}{product}
+              </div>
+            </div>
+            <div style={styles.headerStat}>
+              <div style={styles.headerStatLabel}>EXCHANGE</div>
+              <div style={styles.headerStatValue}>{p.exchange}</div>
+            </div>
+            <div style={styles.headerStat}>
+              <div style={styles.headerStatLabel}>CCY</div>
+              <div style={styles.headerStatValue}>{p.currency}</div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function PromptBar({ prompt, setPrompt, onApply, busy, error }) {
+      return (
+        <div style={styles.promptWrap}>
+          <div style={styles.promptHeader}>
+            <span style={styles.promptLabel}>AI PROMPT</span>
+            <span style={styles.promptHint}>Not available in local mode — fill fields manually.</span>
+          </div>
+          <div style={styles.promptRow}>
+            <textarea
+              className="lp-input" value={prompt} onChange={(e) => setPrompt(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) onApply(); }}
+              placeholder={'"Sell Euribor from -4.0 to -1.0, risk $500, capture $1000, stop at -0.75, 5 tick step"'}
+              rows={3} style={styles.promptInput} disabled={busy}
+            />
+            <button className="lp-btn" onClick={onApply} disabled={busy || !prompt.trim()} style={styles.promptBtn}>
+              {busy ? "PARSING…" : "APPLY"}
+            </button>
+          </div>
+          {error && <div style={styles.promptError}>{error}</div>}
+        </div>
+      );
+    }
+
+    function Section({ title, children }) {
+      return (
+        <div style={styles.section}>
+          <div style={styles.sectionTitle}>{title}</div>
+          {children}
+        </div>
+      );
+    }
+
+    function Spec({ label, value, highlight }) {
+      return (
+        <div style={styles.specBox}>
+          <div style={styles.specLabel}>{label}</div>
+          <div style={{ ...styles.specValue, color: highlight ? "#4a90c2" : "#e8ebef" }}>{value}</div>
+        </div>
+      );
+    }
+
+    function NumInput({ label, value, onChange, step = 0.01, min, max, rightAction }) {
+      const [raw, setRaw] = useState(value == null || isNaN(value) ? "" : String(value));
+      const focusedRef = useRef(false);
+
+      useEffect(() => {
+        if (!focusedRef.current) {
+          const next = value == null || isNaN(value) ? "" : String(value);
+          setRaw(next);
+        }
+      }, [value]);
+
+      function handleChange(e) {
+        const s = e.target.value;
+        setRaw(s);
+        if (s === "" || s === "-" || s === "." || s === "-.") return;
+        const n = Number(s);
+        if (Number.isFinite(n)) {
+          if (min != null && n < min) return;
+          if (max != null && n > max) return;
+          onChange(n);
+        }
+      }
+
+      function handleBlur() {
+        focusedRef.current = false;
+        const n = Number(raw);
+        if (!Number.isFinite(n) || raw === "" || raw === "-" || raw === "." || raw === "-.") {
+          setRaw(value == null || isNaN(value) ? "" : String(value));
+        } else {
+          let clamped = n;
+          if (min != null && clamped < min) clamped = min;
+          if (max != null && clamped > max) clamped = max;
+          if (clamped !== n) onChange(clamped);
+          setRaw(String(clamped));
+        }
+      }
+
+      return (
+        <label style={styles.numLabel}>
+          <div style={styles.numLabelText}>{label}</div>
+          <div style={{ position: "relative", display: "flex" }}>
+            <input type="text" inputMode="decimal" className="lp-input" value={raw}
+              onChange={handleChange} onFocus={() => { focusedRef.current = true; }} onBlur={handleBlur}
+              style={{ ...styles.numInput, flex: 1, paddingRight: rightAction ? 56 : undefined }}
+              spellCheck={false} autoComplete="off"
+            />
+            {rightAction && (
+              <button type="button" onClick={rightAction.onClick} style={styles.numInputAction} className="lp-action-btn">
+                {rightAction.label}
+              </button>
+            )}
+          </div>
+        </label>
+      );
+    }
+
+    function ModelCard({ model, levels, stopPrice, tpPrice, tpIsAuto, tickSize, usdTickValue, targetRisk, targetReward, tolerance, direction, onChangeLot, onResetManual }) {
+      const result = computeModel(levels, model.lots, stopPrice, tpPrice, tickSize, usdTickValue, targetRisk, tolerance);
+      const devColor = result.withinTol ? "#5fb878" : "#d66868";
+      const sideColor = direction === "Buy" ? "#5fb878" : "#d66868";
+      const targetRR = targetRisk > 0 ? targetReward / targetRisk : 0;
+      const rrColor = result.rr >= targetRR ? "#5fb878" : result.rr >= targetRR * 0.85 ? "#d4a853" : "#d66868";
+      const tpMisconfigured = result.totalLots > 0 && result.rewardSign !== 0 && (
+        (direction === "Buy" && tpPrice < Math.max(...levels)) ||
+        (direction === "Sell" && tpPrice > Math.min(...levels))
+      );
+
+      return (
+        <div style={styles.modelCard}>
+          <div style={styles.modelHeader}>
+            <div>
+              <div style={styles.modelName}>{model.name}</div>
+              <div style={styles.modelSub}>
+                {model.subtitle} · <span style={{ color: "#7a8490" }}>{model.hint}</span>
+                {tpIsAuto && model.lots.reduce((a, b) => a + b, 0) > 0 && isFinite(tpPrice) && (
+                  <span style={{ marginLeft: 8, color: "#4a90c2", fontSize: 10 }}>· TP AUTO {tpPrice.toFixed(4)}</span>
+                )}
+              </div>
+            </div>
+            <div style={styles.modelHeaderRight}>
+              {model.editable && (
+                <button className="lp-btn" onClick={onResetManual} style={styles.resetBtn}>RESET TO EQUAL</button>
+              )}
+              <div style={{ ...styles.variancePill, color: devColor, borderColor: devColor }}>
+                RISK {result.deviation >= 0 ? "+" : ""}{result.deviation.toFixed(1)}%
+              </div>
+              <div style={{ ...styles.variancePill, color: rrColor, borderColor: rrColor }}>
+                RR {result.rr.toFixed(2)}:1
+              </div>
+            </div>
+          </div>
+          <div style={styles.modelStatsRow}>
+            <ModelStat label="AVG ENTRY"  value={isNaN(result.avgEntry) ? "—" : result.avgEntry.toFixed(4)} />
+            <ModelStat label="TOTAL LOTS" value={result.totalLots.toString()} />
+            <ModelStat label="HEAT @ STOP" value={`$${result.totalRisk.toFixed(0)}`} accent={devColor} />
+            <ModelStat label="REWARD @ TP" value={`$${result.totalReward.toFixed(0)}`} accent={rrColor} />
+            <ModelStat label="TARGET R:R"  value={`$${targetRisk.toFixed(0)} : $${targetReward.toFixed(0)}`} muted />
+          </div>
+          {tpMisconfigured && (
+            <div style={styles.warningBox}>⚠ TP on wrong side of entries for a {direction.toUpperCase()} — check TP price.</div>
+          )}
+          <DOMLadder
+            levels={levels} lots={model.lots} perLevelRisk={result.perLevelRisk} perLevelReward={result.perLevelReward}
+            stopPrice={stopPrice} tpPrice={tpPrice} tickSize={tickSize} direction={direction}
+            editable={model.editable} onChangeLot={onChangeLot}
+            totalLots={result.totalLots} totalRisk={result.totalRisk} totalReward={result.totalReward}
+            rr={result.rr} avgEntry={result.avgEntry}
+          />
+        </div>
+      );
+    }
+
+    function ModelStat({ label, value, accent, muted }) {
+      return (
+        <div style={styles.modelStat}>
+          <div style={styles.modelStatLabel}>{label}</div>
+          <div style={{ ...styles.modelStatValue, color: accent || (muted ? "#7a8490" : "#e8ebef") }}>{value}</div>
+        </div>
+      );
+    }
+
+    function roundKey(price) {
+      return Math.round(price * 1e8) / 1e8 + "";
+    }
+
+    function OrderPlanBlock({ orderPlan, direction, totalLots, totalRisk, totalReward, rr, avgEntry, sideColor }) {
+      const side = direction.toUpperCase();
+      const hasOrders = orderPlan.length > 0;
+      return (
+        <div style={opStyles.wrap}>
+          <div style={opStyles.head}>
+            <span style={opStyles.headLabel}>ORDER PLAN</span>
+            <span style={{ ...opStyles.sideTag, color: sideColor, borderColor: sideColor }}>{side}</span>
+          </div>
+          {hasOrders ? (
+            <>
+              <div style={opStyles.orderList}>
+                {orderPlan.map((o, i) => (
+                  <div key={i} style={opStyles.orderRow}>
+                    <span style={{ ...opStyles.orderSide, color: sideColor }}>{side}</span>
+                    <span style={opStyles.orderLots}>{o.lots}</span>
+                    <span style={opStyles.orderAt}>@</span>
+                    <span style={opStyles.orderPrice}>{o.price.toFixed(4)}</span>
+                    <span style={opStyles.orderRisk}>−${o.risk.toFixed(0)}</span>
+                    <span style={opStyles.orderReward}>+${o.reward.toFixed(0)}</span>
+                  </div>
+                ))}
+              </div>
+              <div style={opStyles.summary}>
+                <span><span style={opStyles.sumLabel}>TOTAL </span><span style={opStyles.sumValue}>{totalLots} lots</span></span>
+                <span style={opStyles.sep}>·</span>
+                <span><span style={opStyles.sumLabel}>AVG </span><span style={opStyles.sumValue}>{isNaN(avgEntry) ? "—" : avgEntry.toFixed(4)}</span></span>
+                <span style={opStyles.sep}>·</span>
+                <span><span style={opStyles.sumLabel}>RISK </span><span style={{ ...opStyles.sumValue, color: "#d66868" }}>−${totalRisk.toFixed(0)}</span></span>
+                <span style={opStyles.sep}>·</span>
+                <span><span style={opStyles.sumLabel}>REWARD </span><span style={{ ...opStyles.sumValue, color: "#5fb878" }}>+${totalReward.toFixed(0)}</span></span>
+                <span style={opStyles.sep}>·</span>
+                <span><span style={opStyles.sumLabel}>RR </span><span style={{ ...opStyles.sumValue, color: "#4a90c2" }}>{rr.toFixed(2)}:1</span></span>
+              </div>
+            </>
+          ) : (
+            <div style={opStyles.empty}>No orders — adjust risk budget or stop distance.</div>
+          )}
+        </div>
+      );
+    }
+
+    const opStyles = {
+      wrap: { background: "#1a1f26", border: "1px solid #2d3540", borderLeft: "3px solid #4a90c2", borderRadius: 4, padding: 12, marginBottom: 10 },
+      head: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
+      headLabel: { fontSize: 10, letterSpacing: "0.14em", fontFamily: "'JetBrains Mono', monospace", color: "#4a90c2", fontWeight: 700 },
+      sideTag: { fontSize: 10, fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, letterSpacing: "0.08em", border: "1px solid", padding: "2px 8px", borderRadius: 4 },
+      orderList: { display: "flex", flexDirection: "column", gap: 2, padding: "6px 4px", borderTop: "1px solid #2d3540", borderBottom: "1px solid #2d3540", marginBottom: 8 },
+      orderRow: { display: "grid", gridTemplateColumns: "60px 60px 20px 100px 1fr 1fr", alignItems: "center", padding: "3px 8px", fontFamily: "'JetBrains Mono', monospace", fontSize: 12 },
+      orderSide: { fontWeight: 700, fontSize: 11, letterSpacing: "0.08em" },
+      orderLots: { fontWeight: 700, color: "#e8ebef", fontSize: 14, textAlign: "right", paddingRight: 10 },
+      orderAt: { color: "#7a8490", textAlign: "center" },
+      orderPrice: { color: "#e8ebef", fontWeight: 600 },
+      orderRisk: { color: "#d66868", fontSize: 11, textAlign: "right", paddingRight: 10 },
+      orderReward: { color: "#5fb878", fontSize: 11, textAlign: "right" },
+      summary: { display: "flex", flexWrap: "wrap", alignItems: "center", gap: "0 8px", padding: "0 4px", fontFamily: "'JetBrains Mono', monospace", fontSize: 11 },
+      sumLabel: { color: "#7a8490", fontSize: 9, letterSpacing: "0.1em", fontWeight: 600 },
+      sumValue: { color: "#e8ebef", fontWeight: 700, fontSize: 12 },
+      sep: { color: "#4a5260" },
+      empty: { color: "#9aa3ad", fontFamily: "'JetBrains Mono', monospace", fontSize: 11, padding: "6px 4px" },
+    };
+
+    function DOMLadder({ levels, lots, perLevelRisk, perLevelReward, stopPrice, tpPrice, tickSize, direction, editable, onChangeLot, totalLots, totalRisk, totalReward, rr, avgEntry }) {
+      if (!levels.length) return null;
+      const isBuy = direction === "Buy";
+      const sideColor = isBuy ? "#5fb878" : "#d66868";
+      const sideColorDim = isBuy ? "rgba(95,184,120,0.22)" : "rgba(214,104,104,0.22)";
+      const maxLots = Math.max(1, ...lots);
+      const scrollRef = useRef(null);
+      const firstActiveRef = useRef(null);
+
+      const levelMap = new Map();
+      levels.forEach((price, idx) => { levelMap.set(roundKey(price), { idx, lots: lots[idx] || 0 }); });
+
+      useEffect(() => {
+        if (firstActiveRef.current && scrollRef.current) {
+          const row = firstActiveRef.current;
+          const container = scrollRef.current;
+          container.scrollTop = Math.max(0, row.offsetTop - container.clientHeight / 3);
+        }
+      }, [lots.join(",")]);
+
+      const orderPlan = [];
+      levels.forEach((price, idx) => {
+        const l = lots[idx] || 0;
+        if (l > 0) orderPlan.push({ price, lots: l, risk: perLevelRisk[idx] || 0, reward: Math.abs(perLevelReward[idx] || 0) });
+      });
+
+      const allPrices = [...levels, stopPrice, tpPrice];
+      const maxP = Math.max(...allPrices);
+      const minP = Math.min(...allPrices);
+      const rawTickCount = Math.round((maxP - minP) / tickSize) + 1;
+      const TICK_HARD_CAP = 2000;
+      const tickCount = Math.min(rawTickCount, TICK_HARD_CAP);
+      const tickPrices = [];
+      for (let i = 0; i < tickCount; i++) { tickPrices.push(roundPrice(maxP - i * tickSize)); }
+
+      return (
+        <div>
+          <OrderPlanBlock orderPlan={orderPlan} direction={direction} totalLots={totalLots} totalRisk={totalRisk} totalReward={totalReward} rr={rr} avgEntry={avgEntry} sideColor={sideColor} />
+          <div style={domStyles.ladderBox}>
+            <div style={domStyles.ladderHeader}>
+              <div style={{ ...domStyles.colLots, textAlign: "right", paddingRight: 10 }}>{isBuy ? "TK→TP" : "LOTS"}</div>
+              <div style={{ ...domStyles.colMid, textAlign: "center" }}>PRICE</div>
+              <div style={{ ...domStyles.colLots, textAlign: "left", paddingLeft: 10 }}>{isBuy ? "LOTS" : "TK→TP"}</div>
+            </div>
+            <div style={domStyles.ladderScroll} ref={scrollRef}>
+              {(() => {
+                let firstActiveAssigned = false;
+                return tickPrices.map((price, i) => {
+                  const key = roundKey(price);
+                  const levelInfo = levelMap.get(key);
+                  const isStop = Math.abs(price - stopPrice) < tickSize / 2;
+                  const isTP = Math.abs(price - tpPrice) < tickSize / 2;
+                  const isActive = !!levelInfo;
+                  const lotCount = levelInfo?.lots || 0;
+                  const hasLots = lotCount > 0;
+                  const levelIdx = levelInfo?.idx;
+                  const ticksSL = Math.abs(price - stopPrice) / tickSize;
+                  const ticksTP = Math.abs(price - tpPrice) / tickSize;
+                  const fillPct = maxLots > 0 ? (lotCount / maxLots) * 100 : 0;
+                  const barSideLeft = !isBuy;
+                  const attachRef = hasLots && !firstActiveAssigned;
+                  if (attachRef) firstActiveAssigned = true;
+                  const rowStyle = {
+                    ...domStyles.tickRow,
+                    ...(hasLots ? { background: "rgba(255,255,255,0.03)" } : {}),
+                    ...(isStop ? { borderTop: "1px dashed #d66868", borderBottom: "1px dashed #d66868", background: "rgba(214,104,104,0.08)" } : {}),
+                    ...(isTP   ? { borderTop: "1px dashed #5fb878", borderBottom: "1px dashed #5fb878", background: "rgba(95,184,120,0.08)" } : {}),
+                  };
+                  const priceColor = isStop ? "#d66868" : isTP ? "#5fb878" : hasLots ? "#e8ebef" : isActive ? "#9aa3ad" : "#5a6370";
+                  const priceWeight = hasLots || isStop || isTP ? 700 : isActive ? 500 : 400;
+                  const priceCell = (
+                    <div style={{ ...domStyles.colMid, textAlign: "center" }}>
+                      <div style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: priceWeight, fontSize: hasLots || isStop || isTP ? 13 : 11, color: priceColor }}>
+                        {price.toFixed(4)}
+                        {isStop && <span style={{ fontSize: 9, marginLeft: 6, letterSpacing: "0.1em" }}>◆ STOP</span>}
+                        {isTP   && <span style={{ fontSize: 9, marginLeft: 6, letterSpacing: "0.1em" }}>◆ TP</span>}
+                      </div>
+                    </div>
+                  );
+                  const lotsCell = (
+                    <div style={{ ...domStyles.colLots, position: "relative", justifyContent: barSideLeft ? "flex-end" : "flex-start" }}>
+                      {hasLots && (
+                        <div style={{ position: "absolute", top: 1, bottom: 1, [barSideLeft ? "right" : "left"]: 0, width: `${fillPct}%`, background: sideColorDim, borderLeft: !barSideLeft ? `2px solid ${sideColor}` : "none", borderRight: barSideLeft ? `2px solid ${sideColor}` : "none", transition: "width 0.3s ease" }} />
+                      )}
+                      <div style={{ position: "relative", zIndex: 2, padding: barSideLeft ? "0 10px 0 0" : "0 0 0 10px", display: "flex", alignItems: "center", height: "100%", width: "100%", justifyContent: barSideLeft ? "flex-end" : "flex-start" }}>
+                        {editable && isActive ? (
+                          <input type="number" className="lp-input" value={lotCount} min={0} step={1}
+                            onChange={(e) => onChangeLot(levelIdx, parseInt(e.target.value, 10))}
+                            style={{ ...domStyles.lotInput, color: hasLots ? sideColor : "#7a8490", textAlign: barSideLeft ? "right" : "left" }} />
+                        ) : hasLots ? (
+                          <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 14, fontWeight: 700, color: sideColor }}>{lotCount}</span>
+                        ) : (
+                          <span style={{ color: "#2a3339", fontSize: 10 }}>·</span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                  const ticksCell = (side) => (
+                    <div style={{ ...domStyles.colLots, textAlign: side === "left" ? "right" : "left", paddingRight: side === "left" ? 10 : 0, paddingLeft: side === "left" ? 0 : 10, fontSize: 9, fontFamily: "'JetBrains Mono', monospace", color: hasLots ? "#9aa3ad" : "#4a5260", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: side === "left" ? "flex-end" : "flex-start", lineHeight: 1.1 }}>
+                      {hasLots && (<><div><span style={{ color: "#5a6370" }}>SL </span>{ticksSL.toFixed(0)}t</div><div><span style={{ color: "#5a6370" }}>TP </span>{ticksTP.toFixed(0)}t</div></>)}
+                    </div>
+                  );
+                  return (
+                    <div key={i} className="lp-ladder-row" style={rowStyle} ref={attachRef ? firstActiveRef : null}>
+                      {isBuy ? (<>{ticksCell("left")}{priceCell}{lotsCell}</>) : (<>{lotsCell}{priceCell}{ticksCell("right")}</>)}
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+            {rawTickCount > TICK_HARD_CAP && (
+              <div style={{ padding: "6px 12px", fontSize: 10, color: "#d4a853", fontFamily: "'JetBrains Mono', monospace", borderTop: "1px solid #2d3540" }}>
+                ⚠ Range too wide — showing first {TICK_HARD_CAP} ticks.
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    const domStyles = {
+      ladderBox: { background: "#1a1f26", border: "1px solid #2d3540", borderRadius: 4, overflow: "hidden" },
+      ladderHeader: { display: "flex", alignItems: "center", padding: "7px 0", fontSize: 9, letterSpacing: "0.1em", color: "#7a8490", fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, borderBottom: "1px solid #2d3540", background: "#232a33" },
+      ladderScroll: { display: "flex", flexDirection: "column", maxHeight: 520, overflowY: "auto", scrollbarWidth: "thin", scrollbarColor: "#2d3540 #1a1f26" },
+      tickRow: { display: "flex", alignItems: "stretch", minHeight: 18, borderBottom: "1px solid #0f1419", transition: "background 0.1s" },
+      colLots: { flex: "1 1 35%", display: "flex", alignItems: "center" },
+      colMid: { flex: "0 0 110px", display: "flex", alignItems: "center", justifyContent: "center", borderLeft: "1px solid #2d3540", borderRight: "1px solid #2d3540", background: "#232a33" },
+      lotInput: { width: "100%", background: "transparent", border: "none", fontFamily: "'JetBrains Mono', monospace", fontSize: 13, fontWeight: 700, padding: "2px 6px", outline: "none" },
+    };
+
+    // =========================================================================
+    // RT SIMULATION ENGINE
+    // =========================================================================
+    function buildRTBands(avgEntry, tpPrice, direction, tickSize, rtSpacingTicks) {
+      const spacing = rtSpacingTicks * tickSize;
+      const isBuy = direction === "Buy";
+      const dir = isBuy ? 1 : -1;
+      const bands = [];
+      let p = avgEntry + dir * spacing;
+      let n = 1;
+      while (n <= 200) {
+        const past = isBuy ? p >= tpPrice : p <= tpPrice;
+        if (past) break;
+        const sellLevel = Math.round(p * 1e8) / 1e8;
+        const buyLevel  = Math.round((p - dir * spacing) * 1e8) / 1e8;
+        bands.push({ id: n, sellLevel, buyLevel });
+        p = Math.round((p + dir * spacing) * 1e8) / 1e8;
+        n++;
+      }
+      return bands;
+    }
+
+    function simulateRT({ totalLots, avgEntry, stopPrice, tpPrice, direction, tickSize, usdTickValue, rtSpacingTicks, rtLots, crossingOverride }) {
+      if (totalLots === 0 || !isFinite(avgEntry) || !isFinite(tpPrice)) return null;
+      const isBuy = direction === "Buy";
+      const bands = buildRTBands(avgEntry, tpPrice, direction, tickSize, rtSpacingTicks);
+      if (!bands.length) return null;
+      const pnlPerRoundTrip = rtLots * rtSpacingTicks * usdTickValue;
+      const totalTrips = crossingOverride != null ? Math.max(0, Math.floor(crossingOverride)) : bands.length * 3;
+      const tripsPerBand = bands.length > 0 ? totalTrips / bands.length : 0;
+      let totalRTPnL = 0;
+      const bandData = bands.map((b, i) => {
+        const trips = crossingOverride != null
+          ? Math.max(0, i < (totalTrips % bands.length) ? Math.ceil(tripsPerBand) : Math.floor(tripsPerBand))
+          : 3;
+        const pnl = trips * pnlPerRoundTrip;
+        totalRTPnL += pnl;
+        return { ...b, trips, pnl: Math.round(pnl * 100) / 100 };
+      });
+      const corePnL  = totalLots * Math.abs(tpPrice - avgEntry) / tickSize * usdTickValue;
+      const totalPnL = totalRTPnL + corePnL;
+      const directPnL = corePnL;
+      const stopLoss  = -(totalLots * Math.abs(stopPrice - avgEntry) / tickSize * usdTickValue);
+      return {
+        bands: bandData,
+        pnlPerRoundTrip: Math.round(pnlPerRoundTrip * 100) / 100,
+        totalRTPnL:  Math.round(totalRTPnL  * 100) / 100,
+        corePnL:     Math.round(corePnL     * 100) / 100,
+        totalPnL:    Math.round(totalPnL    * 100) / 100,
+        directPnL:   Math.round(directPnL   * 100) / 100,
+        rtUplift:    crossingOverride != null ? Math.round(totalRTPnL * 100) / 100 : null,
+        stopLoss:    Math.round(stopLoss    * 100) / 100,
+        breakEvenTrips: pnlPerRoundTrip > 0 ? Math.ceil(Math.abs(stopLoss) / pnlPerRoundTrip) : null,
+      };
+    }
+
+    // =========================================================================
+    // EXIT PLANNER
+    // =========================================================================
+    function ExitPlanner({ models, direction, stopPrice, tpManual, tpPrice, tickSize, usdTickValue, exitMode, setExitMode, rtSpacingTicks, setRtSpacingTicks, rtLots, setRtLots }) {
+      return (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={exitStyles.configCard}>
+            <div style={exitStyles.configTitle}>EXIT CONFIGURATION</div>
+            <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+              {[
+                { id: "direct", label: "DIRECT TARGET", sub: "Hold all lots to TP" },
+                { id: "rt",     label: "RANGE TRADER",  sub: "Market-make bands while drifting to TP" },
+              ].map((m) => (
+                <button key={m.id} onClick={() => setExitMode(m.id)} className="lp-btn" style={{
+                  ...exitStyles.modeBtn,
+                  background:  exitMode === m.id ? "rgba(74,144,194,0.10)" : "transparent",
+                  borderColor: exitMode === m.id ? "#4a90c2" : "#2d3540",
+                  color:       exitMode === m.id ? "#4a90c2" : "#7a8490",
+                }}>
+                  <div style={{ fontWeight: 700, fontSize: 11 }}>{m.label}</div>
+                  <div style={{ fontSize: 9, opacity: 0.8, marginTop: 1 }}>{m.sub}</div>
+                </button>
+              ))}
+            </div>
+            {exitMode === "rt" && (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                <ExitNumInput label="Band spacing (ticks)"     value={rtSpacingTicks} onChange={setRtSpacingTicks} step={1} min={1} />
+                <ExitNumInput label="Lots per band (sell/buy)" value={rtLots}         onChange={setRtLots}         step={1} min={1} />
+                <div style={{ display: "flex", flexDirection: "column", justifyContent: "flex-end", gap: 2 }}>
+                  <div style={{ fontSize: 8, color: "#7a8490", letterSpacing: "0.1em", textTransform: "uppercase" }}>P&L per round-trip</div>
+                  <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 14, fontWeight: 700, color: "#5fb878" }}>
+                    ${(rtLots * rtSpacingTicks * usdTickValue).toFixed(0)}
+                  </div>
+                  <div style={{ fontSize: 9, color: "#7a8490" }}>{rtLots} lots × {rtSpacingTicks} ticks</div>
+                </div>
+              </div>
+            )}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            {models.map((m) => {
+              const effectiveTP = tpManual ? tpPrice : (m.autoTP ?? tpPrice);
+              return (
+                <ExitCard key={m.name} model={m} effectiveTP={effectiveTP} stopPrice={stopPrice}
+                  direction={direction} tickSize={tickSize} usdTickValue={usdTickValue}
+                  exitMode={exitMode} rtSpacingTicks={rtSpacingTicks} rtLots={rtLots} />
+              );
+            })}
+          </div>
+        </div>
+      );
+    }
+
+    function ExitCard({ model, effectiveTP, stopPrice, direction, tickSize, usdTickValue, exitMode, rtSpacingTicks, rtLots }) {
+      const isBuy = direction === "Buy";
+      const totalLots = model.lots.reduce((a, b) => a + b, 0);
+      const avgEntry  = model.avgEntryCache ?? null;
+      const [showAnim, setShowAnim] = useState(false);
+      const [crossingOverride, setCrossingOverride] = useState(null);
+      const safeTP   = effectiveTP != null && isFinite(effectiveTP) ? effectiveTP : null;
+      const fmt      = (v, dec = 0) => v == null || !isFinite(v) ? "—" : v.toFixed(dec);
+      const pnlColor = (v) => v == null ? "#7a8490" : v >= 0 ? "#5fb878" : "#d66868";
+
+      if (totalLots === 0 || avgEntry === null || !isFinite(avgEntry)) {
+        return (
+          <div style={exitStyles.exitCard}>
+            <div style={exitStyles.exitCardTitle}>{model.name}</div>
+            <div style={{ color: "#7a8490", fontSize: 11, padding: "20px 0" }}>Configure entry plan first.</div>
+          </div>
+        );
+      }
+
+      const directPnL = safeTP != null ? totalLots * Math.abs(safeTP - avgEntry) / tickSize * usdTickValue : null;
+      const directSL  = -(totalLots * Math.abs(stopPrice - avgEntry) / tickSize * usdTickValue);
+      const sim = exitMode === "rt" && safeTP != null
+        ? simulateRT({ totalLots, avgEntry, stopPrice, tpPrice: safeTP, direction, tickSize, usdTickValue, rtSpacingTicks, rtLots, crossingOverride })
+        : null;
+
+      return (
+        <div style={exitStyles.exitCard}>
+          <div style={exitStyles.exitCardHeader}>
+            <div style={{ flex: 1 }}>
+              <div style={exitStyles.exitCardTitle}>{model.name}</div>
+              <div style={exitStyles.exitCardSub}>
+                {totalLots} lots @ {avgEntry.toFixed(4)} · TP {safeTP != null ? safeTP.toFixed(4) : "—"} · SL {stopPrice.toFixed(4)}
+              </div>
+            </div>
+            {exitMode === "rt" && sim && (
+              <button className="lp-btn" onClick={() => setShowAnim(v => !v)} style={{
+                background: showAnim ? "rgba(74,144,194,0.12)" : "transparent",
+                border: `1px solid ${showAnim ? "#4a90c2" : "#2d3540"}`,
+                color: showAnim ? "#4a90c2" : "#7a8490",
+                padding: "5px 12px", borderRadius: 4, fontFamily: "inherit",
+                fontSize: 10, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap",
+              }}>{showAnim ? "▶ HIDE" : "▶ ANIMATE"}</button>
+            )}
+          </div>
+
+          {exitMode === "direct" && (
+            <div style={exitStyles.directBlock}>
+              {[
+                { label: "EXIT PRICE", val: safeTP != null ? safeTP.toFixed(4) : "—", color: "#e8ebef" },
+                { label: "LOTS",       val: totalLots,            color: "#e8ebef" },
+                { label: "P&L AT TP",  val: `$${fmt(directPnL)}`, color: pnlColor(directPnL) },
+                { label: "P&L AT SL",  val: `$${fmt(directSL)}`,  color: pnlColor(directSL) },
+                { label: "R:R",        val: directSL < 0 && directPnL != null ? `${(directPnL / Math.abs(directSL)).toFixed(2)}:1` : "—", color: "#4a90c2" },
+              ].map((row) => (
+                <div key={row.label} style={exitStyles.directRow}>
+                  <span style={exitStyles.dlabel}>{row.label}</span>
+                  <span style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, color: row.color }}>{row.val}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {exitMode === "rt" && sim && (
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                <div style={{ fontSize: 9, color: "#7a8490", letterSpacing: "0.1em", textTransform: "uppercase", whiteSpace: "nowrap" }}>Total crossing override</div>
+                <ExitNumInput
+                  value={crossingOverride ?? ""}
+                  onChange={(v) => setCrossingOverride(v != null && v > 0 ? Math.floor(v) : null)}
+                  step={1} min={1} placeholder="AUTO (est 3×/band)"
+                />
+                {crossingOverride != null && (
+                  <button onClick={() => setCrossingOverride(null)} style={{ background: "transparent", border: "1px solid #2d3540", color: "#7a8490", padding: "4px 8px", borderRadius: 3, cursor: "pointer", fontSize: 9, fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                    CLEAR
+                  </button>
+                )}
+              </div>
+              <div style={exitStyles.rtSummary}>
+                <ExitStat label="BANDS"     value={sim.bands.length} />
+                <ExitStat label="P&L/TRIP"  value={`$${fmt(sim.pnlPerRoundTrip)}`} color="#4a90c2" />
+                <ExitStat label="RT P&L"    value={crossingOverride != null ? `$${fmt(sim.totalRTPnL)}` : `~$${fmt(sim.totalRTPnL)}`} color={pnlColor(sim.totalRTPnL)} />
+                <ExitStat label="CORE EXIT" value={`$${fmt(sim.corePnL)}`} color={pnlColor(sim.corePnL)} />
+                <ExitStat label="TOTAL P&L" value={crossingOverride != null ? `$${fmt(sim.totalPnL)}` : `~$${fmt(sim.totalPnL)}`} color={pnlColor(sim.totalPnL)} />
+                <ExitStat label={crossingOverride != null ? "RT UPLIFT" : "DIRECT ONLY"} value={crossingOverride != null ? `+$${fmt(sim.rtUplift)}` : `$${fmt(sim.directPnL)}`} color={crossingOverride != null ? "#5fb878" : "#7a8490"} />
+              </div>
+              <div style={exitStyles.stopOutRow}>
+                <span style={{ color: "#7a8490", fontSize: 10 }}>SL: </span>
+                <span style={{ color: "#d66868", fontFamily: "'JetBrains Mono', monospace", fontSize: 11, fontWeight: 700 }}>${fmt(sim.stopLoss)}</span>
+                <span style={{ color: "#7a8490", fontSize: 10, marginLeft: 8 }}>· breakeven trips: </span>
+                <span style={{ color: "#d4a853", fontFamily: "'JetBrains Mono', monospace", fontSize: 11, fontWeight: 700 }}>{sim.breakEvenTrips ?? "—"}×</span>
+                <span style={{ color: "#7a8490", fontSize: 10, marginLeft: 4 }}>(${fmt(sim.pnlPerRoundTrip)}/trip)</span>
+              </div>
+              <div style={exitStyles.cycleTableWrap}>
+                <div style={exitStyles.cycleTableHead}>
+                  <div style={{ flex: 1 }}>SELL LEVEL</div>
+                  <div style={{ width: 80, textAlign: "right" }}>BUY BACK</div>
+                  <div style={{ width: 60, textAlign: "right" }}>TRIPS</div>
+                  <div style={{ width: 80, textAlign: "right" }}>P&L</div>
+                </div>
+                <div style={{ maxHeight: 160, overflowY: "auto", scrollbarWidth: "thin" }}>
+                  {sim.bands.map((b) => (
+                    <div key={b.id} style={exitStyles.cycleRow}>
+                      <div style={{ flex: 1, fontFamily: "'JetBrains Mono', monospace", color: "#d66868" }}>{b.sellLevel.toFixed(4)}</div>
+                      <div style={{ width: 80, textAlign: "right", fontFamily: "'JetBrains Mono', monospace", color: "#5fb878" }}>{b.buyLevel.toFixed(4)}</div>
+                      <div style={{ width: 60, textAlign: "right", color: "#7a8490" }}>{b.trips}×</div>
+                      <div style={{ width: 80, textAlign: "right", fontFamily: "'JetBrains Mono', monospace", color: "#5fb878", fontWeight: 600 }}>+${fmt(b.pnl)}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {showAnim && sim && safeTP != null && (
+            <RTAnimator
+              avgEntry={avgEntry} tpPrice={safeTP} stopPrice={stopPrice}
+              direction={direction} tickSize={tickSize} usdTickValue={usdTickValue}
+              rtSpacingTicks={rtSpacingTicks} rtLots={rtLots}
+              bands={sim.bands} totalLots={totalLots}
+              crossingOverride={crossingOverride}
+            />
+          )}
+        </div>
+      );
+    }
+
+    function ExitStat({ label, value, color }) {
+      return (
+        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          <div style={{ fontSize: 8, color: "#7a8490", letterSpacing: "0.12em", textTransform: "uppercase" }}>{label}</div>
+          <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, fontWeight: 700, color: color || "#e8ebef" }}>{value}</div>
+        </div>
+      );
+    }
+
+    function ExitNumInput({ label, value, onChange, step = 1, min, placeholder }) {
+      const [raw, setRaw] = useState(value === "" || value == null ? "" : String(value));
+      const focusedRef = useRef(false);
+      useEffect(() => {
+        if (!focusedRef.current) setRaw(value === "" || value == null ? "" : String(value));
+      }, [value]);
+      return (
+        <label style={{ display: "flex", flexDirection: "column", gap: 3, flex: 1 }}>
+          {label && <div style={{ fontSize: 8, color: "#7a8490", letterSpacing: "0.1em", textTransform: "uppercase" }}>{label}</div>}
+          <input type="text" inputMode="decimal" className="lp-input" value={raw} placeholder={placeholder}
+            onChange={(e) => {
+              const s = e.target.value; setRaw(s);
+              if (s === "" || s === "-") { onChange(null); return; }
+              const n = Number(s);
+              if (Number.isFinite(n) && (min == null || n >= min)) onChange(n);
+            }}
+            onFocus={() => { focusedRef.current = true; }}
+            onBlur={() => {
+              focusedRef.current = false;
+              const n = Number(raw);
+              if (!Number.isFinite(n) || raw === "") setRaw(value === "" || value == null ? "" : String(value));
+            }}
+            style={{ background: "#1a1f26", border: "1px solid #2d3540", color: "#e8ebef", padding: "6px 8px", fontFamily: "'JetBrains Mono', monospace", fontSize: 12, fontWeight: 600, borderRadius: 4, width: "100%", boxSizing: "border-box" }}
+          />
+        </label>
+      );
+    }
+
+    // =========================================================================
+    // RT ANIMATOR
+    // =========================================================================
+    function RTAnimator({ avgEntry, tpPrice, stopPrice, direction, tickSize, usdTickValue, rtSpacingTicks, rtLots, bands, totalLots, crossingOverride }) {
+      const isBuy      = direction === "Buy";
+      const sign       = isBuy ? 1 : -1;
+      const sideColor  = isBuy ? "#5fb878" : "#d66868";
+      const pnlPerTrip = rtLots * rtSpacingTicks * usdTickValue;
+
+      const [seed, setSeed]         = useState(1);
+      const [playing, setPlaying]   = useState(false);
+      const [frameIdx, setFrameIdx] = useState(0);
+      const [speed, setSpeed]       = useState(1);
+      const intervalRef    = useRef(null);
+      const ladderRef      = useRef(null);
+      const activePriceRef = useRef(null);
+
+      const SPEEDS = { 1: 600, 2: 200, 3: 60 };
+
+      const pricePath = useMemo(() => {
+        const dist       = Math.abs(tpPrice - avgEntry);
+        const totalTicks = Math.round(dist / tickSize);
+        const maxSteps   = Math.min(totalTicks * 20, 1200);
+        const path       = [avgEntry];
+        let p = avgEntry;
+        let s = (seed * 1664525 + 1013904223) >>> 0;
+        for (let i = 0; i < maxSteps; i++) {
+          s = (s * 1664525 + 1013904223) >>> 0;
+          const r = (s >>> 0) / 0x100000000;
+          const distToTP  = Math.abs(tpPrice - p);
+          const driftBias = 0.55 + Math.min(0.1, distToTP / (dist * 5));
+          const moveTowardTP = r < driftBias;
+          const delta = moveTowardTP ? tickSize * sign : -tickSize * sign;
+          p = Math.round((p + delta) * 1e8) / 1e8;
+          if ((isBuy && p <= stopPrice) || (!isBuy && p >= stopPrice)) {
+            p = stopPrice; path.push(p);
+            for (let k = 0; k < 8; k++) path.push(p);
+            break;
+          }
+          if ((isBuy && p >= tpPrice) || (!isBuy && p <= tpPrice)) {
+            p = tpPrice; path.push(p);
+            for (let k = 0; k < 8; k++) path.push(p);
+            break;
+          }
+          path.push(p);
+        }
+        if (Math.abs(path[path.length - 1] - tpPrice) > tickSize * 0.5 &&
+            Math.abs(path[path.length - 1] - stopPrice) > tickSize * 0.5) {
+          let cur = path[path.length - 1];
+          let safety = 0;
+          while (Math.abs(cur - tpPrice) > tickSize * 0.5 && safety++ < 200) {
+            cur = Math.round((cur + tickSize * sign) * 1e8) / 1e8;
+            path.push(cur);
+          }
+          path.push(tpPrice);
+        }
+        return path;
+      }, [seed, avgEntry, tpPrice, stopPrice, direction, tickSize]);
+
+      const frameState = useMemo(() => {
+        const states = [];
+        const bs = bands.map(() => ({ sold: false, trips: 0 }));
+        let rtPnL = 0;
+        let lastExec = null;
+        let totalTrips = 0;
+        for (let i = 0; i < pricePath.length; i++) {
+          const prev = i > 0 ? pricePath[i - 1] : pricePath[0];
+          const curr = pricePath[i];
+          let execThisFrame = null;
+          for (let bi = 0; bi < bands.length; bi++) {
+            const b = bands[bi]; const st = bs[bi];
+            if (!st.sold) {
+              const hitSell = isBuy ? (prev < b.sellLevel && curr >= b.sellLevel) : (prev > b.sellLevel && curr <= b.sellLevel);
+              if (hitSell) { st.sold = true; execThisFrame = { type: "sell", price: b.sellLevel, lots: rtLots, band: bi + 1 }; }
+            } else {
+              const hitBuy = isBuy ? (prev > b.buyLevel && curr <= b.buyLevel) : (prev < b.buyLevel && curr >= b.buyLevel);
+              if (hitBuy) {
+                st.sold = false;
+                if (crossingOverride == null || totalTrips < crossingOverride) {
+                  st.trips += 1; totalTrips += 1; rtPnL += pnlPerTrip;
+                  execThisFrame = { type: "buy", price: b.buyLevel, lots: rtLots, band: bi + 1, tripPnL: pnlPerTrip };
+                } else {
+                  execThisFrame = { type: "buy", price: b.buyLevel, lots: rtLots, band: bi + 1, tripPnL: 0 };
+                }
+              }
+            }
+          }
+          const atTP   = Math.abs(curr - tpPrice)  < tickSize * 0.6;
+          const atStop = Math.abs(curr - stopPrice) < tickSize * 0.6;
+          const corePnLNow = totalLots * Math.abs(curr - avgEntry) / tickSize * usdTickValue * ((isBuy ? curr > avgEntry : curr < avgEntry) ? 1 : -1);
+          const totalPnLNow = rtPnL + corePnLNow;
+          if (execThisFrame) lastExec = execThisFrame;
+          states.push({
+            price: curr, rtPnL: Math.round(rtPnL * 100) / 100, totalPnL: Math.round(totalPnLNow * 100) / 100,
+            totalTrips, exec: execThisFrame, lastExec, bandSold: bs.map(x => x.sold), bandTrips: bs.map(x => x.trips), atTP, atStop,
+          });
+          if (atTP || atStop) break;
+        }
+        return states;
+      }, [pricePath, bands, rtLots, pnlPerTrip, isBuy, tickSize, tpPrice, stopPrice, crossingOverride, totalLots, avgEntry, usdTickValue]);
+
+      useEffect(() => { setFrameIdx(0); setPlaying(false); }, [pricePath]);
+      useEffect(() => {
+        if (playing) {
+          intervalRef.current = setInterval(() => {
+            setFrameIdx(prev => {
+              if (prev >= frameState.length - 1) { setPlaying(false); return prev; }
+              return prev + 1;
+            });
+          }, SPEEDS[speed]);
+        } else { clearInterval(intervalRef.current); }
+        return () => clearInterval(intervalRef.current);
+      }, [playing, speed, frameState.length]);
+
+      useEffect(() => {
+        if (activePriceRef.current && ladderRef.current) {
+          ladderRef.current.scrollTop = Math.max(0, activePriceRef.current.offsetTop - ladderRef.current.clientHeight / 2 + 12);
+        }
+      }, [frameIdx]);
+
+      const frame = frameState[frameIdx] || frameState[0];
+      if (!frame) return null;
+      const currentPrice = frame.price;
+      const flashExec    = frame.exec;
+
+      const pMin = Math.min(stopPrice, tpPrice, avgEntry) - tickSize * 5;
+      const pMax = Math.max(stopPrice, tpPrice, avgEntry) + tickSize * 5;
+      const ladderPrices = [];
+      for (let p = pMax; p >= pMin - tickSize * 0.1; p = Math.round((p - tickSize) * 1e8) / 1e8) {
+        ladderPrices.push(Math.round(p * 1e8) / 1e8);
+        if (ladderPrices.length >= 150) break;
+      }
+
+      return (
+        <div style={animStyles.wrap}>
+          <div style={animStyles.controls}>
+            <button className="lp-btn" onClick={() => {
+              if (frameIdx >= frameState.length - 1) { setSeed(s => s + 1); setPlaying(true); }
+              else setPlaying(p => !p);
+            }} style={animStyles.ctrlBtn}>
+              {playing ? "⏸ PAUSE" : frameIdx >= frameState.length - 1 ? "↺ REPLAY" : "▶ PLAY"}
+            </button>
+            <button className="lp-btn" onClick={() => { setFrameIdx(0); setPlaying(false); }} style={animStyles.ctrlBtn}>↺ RESET</button>
+            <div style={animStyles.speedWrap}>
+              <span style={animStyles.speedLabel}>SPEED</span>
+              {[1, 2, 3].map(s => (
+                <button key={s} className="lp-btn" onClick={() => setSpeed(s)} style={{
+                  ...animStyles.speedBtn,
+                  borderColor: speed === s ? "#4a90c2" : "#2d3540",
+                  color:       speed === s ? "#4a90c2" : "#7a8490",
+                  background:  speed === s ? "rgba(74,144,194,0.1)" : "transparent",
+                }}>{s === 1 ? "SLOW" : s === 2 ? "MED" : "FAST"}</button>
+              ))}
+            </div>
+            <div style={animStyles.progressBar}>
+              <div style={{ ...animStyles.progressFill, width: `${(frameIdx / Math.max(frameState.length - 1, 1)) * 100}%` }} />
+            </div>
+            <span style={{ fontSize: 10, fontFamily: "'JetBrains Mono', monospace", minWidth: 64, textAlign: "right",
+              color: frame.atTP ? "#5fb878" : frame.atStop ? "#d66868" : "#7a8490" }}>
+              {frame.atTP ? "✓ TP" : frame.atStop ? "⛔ STOP" : `${frameIdx}/${frameState.length - 1}`}
+            </span>
+          </div>
+
+          <div style={animStyles.statsBar}>
+            <div style={animStyles.stat}>
+              <span style={animStyles.statLabel}>PRICE</span>
+              <span style={{ ...animStyles.statVal, color: frame.atTP ? "#5fb878" : frame.atStop ? "#d66868" : "#e8ebef" }}>{currentPrice.toFixed(4)}</span>
+            </div>
+            <div style={animStyles.stat}>
+              <span style={animStyles.statLabel}>CORE LOTS</span>
+              <span style={{ ...animStyles.statVal, color: sideColor }}>{totalLots}</span>
+            </div>
+            <div style={animStyles.stat}>
+              <span style={animStyles.statLabel}>CHURNS</span>
+              <span style={{ ...animStyles.statVal, color: crossingOverride != null && frame.totalTrips >= crossingOverride ? "#5fb878" : "#4a90c2" }}>
+                {frame.totalTrips}{crossingOverride != null ? `/${crossingOverride}` : ""}
+                {crossingOverride != null && frame.totalTrips >= crossingOverride ? " ✓" : ""}
+              </span>
+            </div>
+            <div style={animStyles.stat}>
+              <span style={animStyles.statLabel}>RT P&L</span>
+              <span style={{ ...animStyles.statVal, color: frame.rtPnL >= 0 ? "#5fb878" : "#d66868" }}>${frame.rtPnL.toFixed(0)}</span>
+            </div>
+            <div style={animStyles.stat}>
+              <span style={animStyles.statLabel}>TOTAL P&L</span>
+              <span style={{ ...animStyles.statVal, color: frame.totalPnL >= 0 ? "#5fb878" : "#d66868" }}>${frame.totalPnL.toFixed(0)}</span>
+            </div>
+            {frame.lastExec && (
+              <div style={{
+                background: frame.lastExec.type === "buy" ? "rgba(95,184,120,0.18)" : "rgba(214,104,104,0.18)",
+                borderRadius: 4, padding: "4px 12px",
+                border: `1px solid ${frame.lastExec.type === "buy" ? "#5fb878" : "#d66868"}`,
+                opacity: flashExec ? 1 : 0.35, transition: "opacity 0.25s",
+              }}>
+                <span style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, fontSize: 12,
+                  color: frame.lastExec.type === "buy" ? "#5fb878" : "#d66868" }}>
+                  {frame.lastExec.type === "buy" ? "▲ BUY BACK" : "▼ SELL"} {frame.lastExec.lots} @ {frame.lastExec.price.toFixed(4)}
+                  {frame.lastExec.type === "buy" && frame.lastExec.tripPnL ? `  +$${frame.lastExec.tripPnL.toFixed(0)}` : ""}
+                </span>
+              </div>
+            )}
+          </div>
+
+          <div style={animStyles.ladder} ref={ladderRef}>
+            {ladderPrices.map((price, i) => {
+              const isCurrent  = Math.abs(price - currentPrice) < tickSize * 0.5;
+              const isStop     = Math.abs(price - stopPrice)    < tickSize * 0.1;
+              const isTPRow    = Math.abs(price - tpPrice)      < tickSize * 0.1;
+              const isAvg      = Math.abs(price - avgEntry)     < tickSize * 0.3;
+              const sellBandIdx = bands.findIndex(b => Math.abs(b.sellLevel - price) < tickSize * 0.1);
+              const buyBandIdx  = bands.findIndex(b => Math.abs(b.buyLevel  - price) < tickSize * 0.1);
+              const isSellRow   = sellBandIdx >= 0;
+              const isBuyRow    = buyBandIdx  >= 0;
+              const sellActive  = isSellRow && !frame.bandSold[sellBandIdx];
+              const buyActive   = isBuyRow  &&  frame.bandSold[buyBandIdx];
+              const isFlashSell = flashExec && flashExec.type === "sell" && Math.abs(price - flashExec.price) < tickSize * 0.1;
+              const isFlashBuy  = flashExec && flashExec.type === "buy"  && Math.abs(price - flashExec.price) < tickSize * 0.1;
+              let rowBg = "transparent";
+              if      (isFlashSell) rowBg = "rgba(214,104,104,0.35)";
+              else if (isFlashBuy)  rowBg = "rgba(95,184,120,0.35)";
+              else if (isCurrent)   rowBg = "rgba(255,255,255,0.06)";
+              else if (sellActive)  rowBg = "rgba(214,104,104,0.05)";
+              else if (buyActive)   rowBg = "rgba(95,184,120,0.07)";
+              const priceColor = isTPRow ? "#5fb878" : isStop ? "#d66868" : isAvg ? "#d4a853"
+                : isCurrent ? "#ffffff" : (isSellRow || isBuyRow) ? "#c8d0d8" : "#5a6370";
+              return (
+                <div key={i} ref={isCurrent ? activePriceRef : null} style={{
+                  ...animStyles.priceRow, background: rowBg, transition: "background 0.1s",
+                  borderLeft:  sellActive ? "2px solid rgba(214,104,104,0.4)" : buyActive ? "2px solid rgba(95,184,120,0.4)" : "2px solid transparent",
+                  borderRight: sellActive ? "2px solid rgba(214,104,104,0.4)" : buyActive ? "2px solid rgba(95,184,120,0.4)" : "2px solid transparent",
+                }}>
+                  <div style={{ width: 90, display: "flex", alignItems: "center", justifyContent: "flex-end", paddingRight: 8, gap: 4 }}>
+                    {buyActive && (
+                      <>
+                        <span style={{ fontSize: 9, color: "#5fb878", fontFamily: "monospace" }}>{rtLots}</span>
+                        <div style={{ height: 8, width: 36, background: "#5fb878", opacity: isFlashBuy ? 1 : 0.45, borderRadius: 2 }} />
+                      </>
+                    )}
+                  </div>
+                  <div style={{ flex: 1, textAlign: "center", fontFamily: "'JetBrains Mono', monospace",
+                    fontSize: 12, fontWeight: isCurrent || isSellRow || isBuyRow ? 700 : 400,
+                    color: priceColor, display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
+                    {isCurrent && <span style={{ color: sideColor, fontSize: 11 }}>▶</span>}
+                    {price.toFixed(4)}
+                    {isStop  && <span style={{ fontSize: 8, color: "#d66868" }}>  SL</span>}
+                    {isTPRow && <span style={{ fontSize: 8, color: "#5fb878" }}>  TP</span>}
+                    {isAvg && !isCurrent && <span style={{ fontSize: 8, color: "#d4a853" }}>  AVG</span>}
+                  </div>
+                  <div style={{ width: 90, display: "flex", alignItems: "center", paddingLeft: 8, gap: 4 }}>
+                    {sellActive && (
+                      <>
+                        <div style={{ height: 8, width: 36, background: "#d66868", opacity: isFlashSell ? 1 : 0.5, borderRadius: 2 }} />
+                        <span style={{ fontSize: 9, color: "#d66868", fontFamily: "monospace" }}>{rtLots}</span>
+                      </>
+                    )}
+                    {isSellRow && frame.bandSold[sellBandIdx] && (
+                      <span style={{ fontSize: 9, color: "#4a5260", fontFamily: "monospace" }}>sold→</span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div style={animStyles.legend}>
+            {[
+              { color: "#d66868", label: "Sell order" },
+              { color: "#5fb878", label: "Buy-back (after sell)" },
+              { color: "#d4a853", label: "Avg entry" },
+            ].map((l, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <div style={{ width: 8, height: 8, borderRadius: 2, background: l.color }} />
+                <span style={{ fontSize: 9, color: "#7a8490" }}>{l.label}</span>
+              </div>
+            ))}
+            <span style={{ fontSize: 9, color: "#7a8490", marginLeft: 8 }}>
+              {crossingOverride != null ? `${crossingOverride} churns then runs to TP/SL` : "REPLAY = new random path"}
+            </span>
+          </div>
+        </div>
+      );
+    }
+
+    // =========================================================================
+    // STYLES
+    // =========================================================================
+    const animStyles = {
+      wrap: { background: "#141920", border: "1px solid #2d3540", borderRadius: 4, marginBottom: 10, overflow: "hidden" },
+      controls: { display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: "1px solid #2d3540", background: "#1a1f26", flexWrap: "wrap" },
+      ctrlBtn: { background: "transparent", border: "1px solid #2d3540", color: "#d4d8dd", padding: "5px 12px", borderRadius: 4, fontFamily: "'JetBrains Mono', monospace", fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", cursor: "pointer" },
+      speedWrap: { display: "flex", alignItems: "center", gap: 4 },
+      speedLabel: { fontSize: 9, color: "#7a8490", letterSpacing: "0.1em", marginRight: 2, fontFamily: "'JetBrains Mono', monospace" },
+      speedBtn: { border: "1px solid", padding: "4px 8px", borderRadius: 3, fontFamily: "'JetBrains Mono', monospace", fontSize: 9, fontWeight: 700, cursor: "pointer", letterSpacing: "0.08em" },
+      progressBar: { flex: 1, height: 4, background: "#2d3540", borderRadius: 2, overflow: "hidden", minWidth: 60 },
+      progressFill: { height: "100%", background: "#4a90c2", borderRadius: 2, transition: "width 0.08s linear" },
+      statsBar: { display: "flex", alignItems: "center", gap: 16, padding: "8px 12px", borderBottom: "1px solid #2d3540", background: "#1a1f26", flexWrap: "wrap", minHeight: 52 },
+      stat: { display: "flex", flexDirection: "column", gap: 2 },
+      statLabel: { fontSize: 8, color: "#7a8490", letterSpacing: "0.12em", textTransform: "uppercase" },
+      statVal: { fontFamily: "'JetBrains Mono', monospace", fontSize: 14, fontWeight: 700 },
+      ladder: { maxHeight: 360, overflowY: "auto", scrollbarWidth: "thin", scrollbarColor: "#2d3540 #141920" },
+      priceRow: { display: "flex", alignItems: "center", height: 24, borderBottom: "1px solid rgba(45,53,64,0.5)" },
+      legend: { display: "flex", gap: 14, padding: "6px 12px", borderTop: "1px solid #2d3540", flexWrap: "wrap", background: "#1a1f26" },
+    };
+
+    const exitStyles = {
+      tabBar: { display: "flex", borderBottom: "1px solid #2d3540", background: "#232a33", borderRadius: "4px 4px 0 0", overflow: "hidden" },
+      tabBtn: { flex: 1, padding: "10px 0", background: "transparent", border: "none", borderBottom: "2px solid transparent", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace", fontSize: 11, letterSpacing: "0.1em", transition: "all 0.12s" },
+      configCard: { background: "#232a33", border: "1px solid #2d3540", borderRadius: 4, padding: 14 },
+      configTitle: { fontSize: 9, letterSpacing: "0.15em", color: "#7a8490", fontWeight: 700, textTransform: "uppercase", marginBottom: 12 },
+      modeBtn: { flex: 1, padding: "8px 12px", border: "1px solid", borderRadius: 4, cursor: "pointer", fontFamily: "inherit", textAlign: "left", transition: "all 0.12s" },
+      exitCard: { background: "#232a33", border: "1px solid #2d3540", borderRadius: 4, padding: 12, position: "relative" },
+      exitCardHeader: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10, paddingBottom: 10, borderBottom: "1px solid #2d3540" },
+      exitCardTitle: { fontSize: 12, fontWeight: 700, color: "#e8ebef", letterSpacing: "0.06em" },
+      exitCardSub: { fontSize: 9, color: "#7a8490", marginTop: 3, fontFamily: "'JetBrains Mono', monospace" },
+      directBlock: { display: "flex", flexDirection: "column", gap: 4 },
+      directRow: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "3px 0" },
+      dlabel: { fontSize: 9, color: "#7a8490", letterSpacing: "0.1em", textTransform: "uppercase" },
+      rtSummary: { display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 0, background: "#1a1f26", border: "1px solid #2d3540", borderRadius: 4, padding: "8px 10px", marginBottom: 8 },
+      stopOutRow: { display: "flex", alignItems: "center", gap: 6, padding: "5px 8px", background: "rgba(214,104,104,0.05)", border: "1px solid rgba(214,104,104,0.2)", borderRadius: 3, marginBottom: 8, fontSize: 10 },
+      cycleTableWrap: { background: "#1a1f26", border: "1px solid #2d3540", borderRadius: 4, overflow: "hidden" },
+      cycleTableHead: { display: "flex", alignItems: "center", padding: "5px 10px", fontSize: 8, letterSpacing: "0.12em", color: "#7a8490", fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, textTransform: "uppercase", borderBottom: "1px solid #2d3540", background: "#232a33" },
+      cycleRow: { display: "flex", alignItems: "center", padding: "5px 10px", fontSize: 11, fontFamily: "'JetBrains Mono', monospace", borderBottom: "1px solid #252c36" },
+    };
+
+    // ── MARKET GRID ──────────────────────────────────────────────────────────
+    function MarketGrid({ qhBase, qhToken }) {
+      const MONTHS    = ['F','G','H','J','K','M','N','Q','U','V','X','Z'];
+      const MONTH_NUM = {F:1,G:2,H:3,J:4,K:5,M:6,N:7,Q:8,U:9,V:10,X:11,Z:12};
+      const MONTH_NAME = {F:"Jan",G:"Feb",H:"Mar",J:"Apr",K:"May",M:"Jun",N:"Jul",Q:"Aug",U:"Sep",V:"Oct",X:"Nov",Z:"Dec"};
+
+      // IMM quarterly months — standard for SOFR, SONIA, SARON
+      const IMM_QUARTERLY = ['H','M','U','Z']; // Mar, Jun, Sep, Dec
+      // Euribor uses M,U,Z,H cycle (Jun, Sep, Dec, Mar) — same months, starts from M
+      // But since we just pick "next 4 from today" it works the same way
+
+      // Fed Funds: monthly
+      const FF_MONTHS = ['F','G','H','J','K','M','N','Q','U','V','X','Z'];
+
+      function getNextNQuarterly(prefix, monthSet, n = 10) {
+        const today = new Date();
+        const candidates = [];
+        for (let y = today.getFullYear(); y <= today.getFullYear() + 4; y++) {
+          for (const m of monthSet) {
+            // Use 3rd Wednesday approximation — if past mid-month treat as expired
+            const expiry = new Date(y, MONTH_NUM[m] - 1, 21);
+            if (expiry > today) {
+              candidates.push(`${prefix}${m}${String(y).slice(2)}`);
+            }
+          }
+        }
+        return candidates.slice(0, n);
+      }
+
+      function getNextNMonthly(prefix, n = 10) {
+        const today = new Date();
+        const candidates = [];
+        for (let y = today.getFullYear(); y <= today.getFullYear() + 2; y++) {
+          for (const m of FF_MONTHS) {
+            const expiry = new Date(y, MONTH_NUM[m] - 1, 28);
+            if (expiry > today) {
+              candidates.push(`${prefix}${m}${String(y).slice(2)}`);
+            }
+          }
+        }
+        return candidates.slice(0, n);
+      }
+
+      const [gridData,   setGridData]   = useState({});
+      const [loading,    setLoading]    = useState(false);
+      const [lastUpdate, setLastUpdate] = useState(null);
+
+      async function fetchContractCandle(code) {
+        const r = await fetch(
+          `${qhBase}/api/v2/ohlc/?instruments=${code}&interval=1D&count=2`,
+          { headers: { "Authorization": `Bearer ${qhToken}` } }
+        );
+        if (!r.ok) return null;
+        const raw = await r.json();
+        // extract candles — handle both flat list and nested object
+        let candles = [];
+        if (Array.isArray(raw)) candles = raw;
+        else if (raw.results) candles = raw.results;
+        else {
+          for (const v of Object.values(raw)) { if (Array.isArray(v)) { candles = v; break; } }
+        }
+        if (!candles.length) return null;
+        const sorted = [...candles].sort((a,b) => {
+          const ta = a.datetime ?? a.time ?? a.t ?? 0;
+          const tb = b.datetime ?? b.time ?? b.t ?? 0;
+          return String(ta) < String(tb) ? -1 : 1;
+        });
+        const last      = sorted[sorted.length - 1];
+        const prev      = sorted.length > 1 ? sorted[sorted.length - 2] : null;
+        const close     = last.close  ?? last.c  ?? null;
+        const prevClose = prev ? (prev.close ?? prev.c ?? null) : null;
+        const chg       = close != null && prevClose != null ? close - prevClose : null;
+        const chgPct    = chg   != null && prevClose          ? chg / prevClose * 100 : null;
+        return {
+          label:  code,
+          open:   last.open   ?? last.o ?? null,
+          high:   last.high   ?? last.h ?? null,
+          low:    last.low    ?? last.l ?? null,
+          close,
+          volume: last.volume ?? last.v ?? null,
+          chg, chgPct,
+        };
+      }
+
+      const PRODUCTS_LIST = [
+        { rtlm:"SR3", name:"3M SOFR",   prefix:"SRA", getCodes: () => getNextNQuarterly("SRA", IMM_QUARTERLY, 6) },
+        { rtlm:"ZQ",  name:"Fed Funds", prefix:"FF",  getCodes: () => getNextNMonthly("FF", 6) },
+        { rtlm:"I",   name:"Euribor",   prefix:"ER",  getCodes: () => getNextNQuarterly("ER",  IMM_QUARTERLY, 6) },
+        { rtlm:"SO3", name:"3M SONIA",  prefix:"SON", getCodes: () => getNextNQuarterly("SON", IMM_QUARTERLY, 6) },
+        { rtlm:"SA3", name:"3M SARON",  prefix:"FSR", getCodes: () => getNextNQuarterly("FSR", IMM_QUARTERLY, 6) },
+      ];
+
+      async function fetchAll() {
+  	setLoading(true);
+ 	const results = {};
+  	for (const prod of PRODUCTS_LIST) {
+		const codes = prod.getCodes();
+    		const outrights = [];
+
+   	 	// 1. Fetch Outrights
+    		for (const code of codes) {
+     			 const candle = await fetchContractCandle(code);
+      			if (candle) outrights.push(candle);
+   		 }
+
+    		// 2. Compute 1-Tick Calendar Spreads (Front Leg - Back Leg)
+    		const spreads = [];
+   		for (let i = 0; i < outrights.length - 1; i++) {
+      			const front = outrights[i];
+      			const back = outrights[i + 1];
+
+      			if (front.close != null && back.close != null) {
+       			const spreadClose = front.close - back.close;
+        			// Derive previous day's spread close to calculate daily change
+        			const spreadPrevClose = (front.close - front.chg) - (back.close - back.chg);
+        			const spreadChg = spreadClose - spreadPrevClose;
+
+        			spreads.push({
+         				label: `${front.label}-${back.label}`,
+          				isSpread: true, // Flag to identify it in the UI
+          				close: spreadClose,
+          				chg: spreadChg,
+          				// Volume, Open, High, Low are set to null because deriving spread 
+          				// extremes from outright extremes is mathematically inaccurate.
+          				open: null, high: null, low: null, volume: null, chgPct: null
+        			});
+      			}
+   		 }
+
+    		// 3. Combine both lists into the final row data
+    		results[prod.prefix] = { 
+        			rows: [...outrights, ...spreads], 
+        			name: prod.name, 
+        			rtlm: prod.rtlm, 
+        			codes 
+   	 	};
+ 	 }
+  	setGridData(results);
+  	setLastUpdate(new Date().toLocaleTimeString());
+  	setLoading(false);
+	}
+
+      useEffect(() => { fetchAll(); }, []);
+
+      const fmt      = (v, dec=4) => v == null ? "—" : typeof v === "number" ? v.toFixed(dec) : String(v);
+      const fmtVol   = (v) => v == null ? "—" : v >= 1e6 ? (v/1e6).toFixed(1)+"M" : v >= 1000 ? (v/1000).toFixed(0)+"K" : String(v);
+      const chgColor = (v) => v == null ? "#7a8490" : v > 0 ? "#5fb878" : v < 0 ? "#d66868" : "#7a8490";
+      function prettyLabel(code) {
+  	// If it's a spread, split it, format both sides, and rejoin
+  	if (code.includes('-')) {
+    		const legs = code.split('-');
+    		return `${formatSingle(legs[0])} / ${formatSingle(legs[1])}`;
+  	}
+  	return formatSingle(code);
+
+  	function formatSingle(c) {
+    		const match = c.match(/^([A-Z]+)([FGHJKMNQUVXZ])(\d{2})$/);
+    		if (!match) return c;
+    		return `${c.slice(0, c.length - 3)} ${MONTH_NAME[match[2]] ?? match[2]}${match[3]}`;
+  	}
+       }
+
+      return (
+        <div style={{ padding:12, display:"flex", flexDirection:"column", gap:12 }}>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+            <span style={{ fontSize:10, color:"#7a8490", fontFamily:"monospace", letterSpacing:"0.1em" }}>
+              LIVE MARKET DATA — STIR FUTURES · NEXT 5 ACTIVE CONTRACTS
+            </span>
+            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+              {lastUpdate && <span style={{ fontSize:9, color:"#7a8490", fontFamily:"monospace" }}>Updated {lastUpdate}</span>}
+              <button onClick={fetchAll} disabled={loading} style={{ background:"transparent", border:"1px solid #2d3540", color: loading?"#4a5260":"#4a90c2", fontSize:9, padding:"4px 10px", borderRadius:3, cursor: loading?"default":"pointer", fontFamily:"monospace", letterSpacing:"0.08em" }}>
+                {loading ? "⟳ LOADING…" : "↺ REFRESH"}
+              </button>
+            </div>
+          </div>
+
+          {PRODUCTS_LIST.map(prod => {
+            const d = gridData[prod.prefix];
+            return (
+              <div key={prod.prefix} style={{ background:"#232a33", border:"1px solid #2d3540", borderRadius:4, overflow:"hidden" }}>
+                {/* Product header */}
+                <div style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 12px", background:"#1a1f26", borderBottom:"1px solid #2d3540" }}>
+                  <span style={{ fontSize:13, fontWeight:700, fontFamily:"monospace", color:"#4a90c2" }}>{prod.rtlm}</span>
+                  <span style={{ fontSize:10, color:"#7a8490" }}>{prod.name}</span>
+                  <span style={{ fontSize:9, color:"#4a5260", marginLeft:"auto", fontFamily:"monospace" }}>prefix: {prod.prefix} · {prod.quarterly ? "quarterly" : "monthly"}</span>
+                </div>
+                {/* Column headers */}
+                <div style={{ display:"grid", gridTemplateColumns:"140px 1fr 1fr 1fr 1fr 80px 90px 80px", padding:"4px 12px", fontSize:8, color:"#7a8490", fontFamily:"monospace", letterSpacing:"0.1em", borderBottom:"1px solid #2d3540", background:"#1e242b" }}>
+                  {["CONTRACT","OPEN","HIGH","LOW","CLOSE","VOLUME","CHG","CHG %"].map(h=>(
+                    <div key={h} style={{ textAlign: h==="CONTRACT" ? "left" : "right" }}>{h}</div>
+                  ))}
+                </div>
+                {/* Rows */}
+                {!d && loading && <div style={{ padding:12, fontSize:10, color:"#7a8490", fontFamily:"monospace" }}>Loading…</div>}
+                {d?.rows?.length === 0 && !loading && (
+                  <div style={{ padding:12, fontSize:10, color:"#d4a853", fontFamily:"monospace" }}>
+                    No data — codes tried: {(d.codes || []).join(", ")}
+                  </div>
+                )}
+                {d?.rows?.map((row, i) => (
+                  <div key={i} style={{ display:"grid", gridTemplateColumns:"140px 1fr 1fr 1fr 1fr 80px 90px 80px", padding:"5px 12px", fontSize:11, fontFamily:"monospace", borderBottom:"1px solid #1a1f26", background: i%2===0?"transparent":"rgba(255,255,255,0.02)" }}>
+                    <div style={{ color:"#c8d0d8", fontWeight:700 }}>{prettyLabel(row.label)}</div>
+                    <div style={{ textAlign:"right", color:"#9aa3ad" }}>{fmt(row.open)}</div>
+                    <div style={{ textAlign:"right", color:"#5fb878" }}>{fmt(row.high)}</div>
+                    <div style={{ textAlign:"right", color:"#d66868" }}>{fmt(row.low)}</div>
+                    <div style={{ textAlign:"right", color:"#e8ebef", fontWeight:700 }}>{fmt(row.close)}</div>
+                    <div style={{ textAlign:"right", color:"#7a8490" }}>{fmtVol(row.volume)}</div>
+                    <div style={{ textAlign:"right", color:chgColor(row.chg), fontWeight:600 }}>
+                      {row.chg==null?"—":(row.chg>0?"+":"")+row.chg.toFixed(4)}
+                    </div>
+                    <div style={{ textAlign:"right", color:chgColor(row.chgPct), fontWeight:600 }}>
+                      {row.chgPct==null?"—":(row.chgPct>0?"+":"")+row.chgPct.toFixed(2)+"%"}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+    // ── END MARKET GRID ──────────────────────────────────────────────────────
+    const styles = {
+      root: { minHeight: "100vh", background: "#1a1f26", color: "#d4d8dd", fontFamily: "'Inter', -apple-system, system-ui, sans-serif", fontSize: 12, paddingBottom: 32 },
+      header: { borderBottom: "1px solid #2d3540", padding: "12px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#232a33" },
+      headerLeft: { display: "flex", alignItems: "baseline", gap: 16 },
+      logo: { fontSize: 14, fontWeight: 600, color: "#e8ebef", letterSpacing: "0.01em" },
+      headerMeta: { fontSize: 10, color: "#7a8490", letterSpacing: "0.08em" },
+      headerRight: { display: "flex", gap: 24 },
+      headerStat: { textAlign: "right" },
+      headerStatLabel: { fontSize: 9, color: "#7a8490", letterSpacing: "0.1em", textTransform: "uppercase" },
+      headerStatValue: { fontSize: 12, fontWeight: 600, fontFamily: "'JetBrains Mono', monospace", color: "#e8ebef", marginTop: 2 },
+      body: { display: "grid", gridTemplateColumns: "340px 1fr", gap: 10, padding: 10 },
+      leftCol: { display: "flex", flexDirection: "column", gap: 8 },
+      rightCol: { display: "flex", flexDirection: "column", gap: 8 },
+      promptWrap: { background: "#232a33", border: "1px solid #2d3540", borderRadius: 4, padding: 10 },
+      promptHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 },
+      promptLabel: { fontSize: 10, letterSpacing: "0.1em", color: "#4a90c2", fontWeight: 600, textTransform: "uppercase" },
+      promptHint: { fontSize: 10, color: "#7a8490" },
+      promptRow: { display: "flex", gap: 6 },
+      promptInput: { flex: 1, background: "#1a1f26", border: "1px solid #2d3540", color: "#e8ebef", padding: "7px 9px", fontFamily: "inherit", fontSize: 11, resize: "vertical", borderRadius: 4 },
+      promptBtn: { background: "#2d3540", border: "1px solid #4a90c2", color: "#4a90c2", padding: "0 14px", fontFamily: "inherit", fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", cursor: "pointer", borderRadius: 4, minWidth: 80 },
+      promptError: { marginTop: 6, fontSize: 10, color: "#d66868" },
+      section: { background: "#232a33", border: "1px solid #2d3540", borderRadius: 4, padding: 10 },
+      sectionTitle: { fontSize: 10, letterSpacing: "0.1em", color: "#7a8490", fontWeight: 600, marginBottom: 8, textTransform: "uppercase" },
+      dirRow: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 },
+      dirBtn: { padding: "9px 0", border: "1px solid #2d3540", fontFamily: "inherit", fontSize: 11, fontWeight: 600, letterSpacing: "0.1em", cursor: "pointer", borderRadius: 4, transition: "all 0.12s" },
+      productGrid: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 4 },
+      productPill: { border: "1px solid #2d3540", padding: "7px 4px", cursor: "pointer", fontFamily: "'JetBrains Mono', monospace", borderRadius: 4, transition: "all 0.12s" },
+      pillSub: { fontSize: 9, color: "#7a8490", marginTop: 2, letterSpacing: "0.05em" },
+      specGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 },
+      specBox: { background: "#1a1f26", border: "1px solid #2d3540", padding: "6px 8px", borderRadius: 4 },
+      specLabel: { fontSize: 9, letterSpacing: "0.08em", color: "#7a8490", textTransform: "uppercase" },
+      specValue: { fontSize: 12, fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, marginTop: 2 },
+      inputGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 },
+      numLabel: { display: "flex", flexDirection: "column", gap: 3 },
+      numLabelText: { fontSize: 9, letterSpacing: "0.08em", color: "#7a8490", textTransform: "uppercase" },
+      numInput: { background: "#1a1f26", border: "1px solid #2d3540", color: "#e8ebef", padding: "7px 9px", fontFamily: "'JetBrains Mono', monospace", fontSize: 12, fontWeight: 600, borderRadius: 4, transition: "all 0.12s", width: "100%", boxSizing: "border-box" },
+      numInputAction: { position: "absolute", right: 3, top: 3, bottom: 3, padding: "0 8px", background: "#2d3540", border: "1px solid #3a4552", color: "#4a90c2", fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", fontFamily: "inherit", cursor: "pointer", borderRadius: 3 },
+      rrInfo: { display: "flex", flexDirection: "column", gap: 3, justifyContent: "center", background: "#1a1f26", border: "1px solid #2d3540", padding: "6px 9px", borderRadius: 4 },
+      rrValue: { fontSize: 14, fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, color: "#4a90c2" },
+      solverBtn: { padding: "8px 10px", border: "1px solid #2d3540", fontFamily: "inherit", cursor: "pointer", borderRadius: 4, transition: "all 0.12s", textAlign: "left" },
+      volGrid: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 4 },
+      volBtn: { padding: "8px 4px", border: "1px solid #2d3540", fontFamily: "inherit", cursor: "pointer", borderRadius: 4, transition: "all 0.12s", textAlign: "center" },
+      warningBox: { background: "rgba(214, 104, 104, 0.08)", border: "1px solid rgba(214, 104, 104, 0.35)", color: "#d66868", padding: "6px 10px", borderRadius: 4, fontSize: 10, marginBottom: 8 },
+      modelCard: { background: "#232a33", border: "1px solid #2d3540", borderRadius: 4, padding: 12 },
+      modelHeader: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10, paddingBottom: 10, borderBottom: "1px solid #2d3540" },
+      modelName: { fontSize: 13, fontWeight: 600, color: "#e8ebef", letterSpacing: "0.04em" },
+      modelSub: { fontSize: 10, color: "#7a8490", marginTop: 3 },
+      modelHeaderRight: { display: "flex", gap: 6, alignItems: "center" },
+      resetBtn: { background: "transparent", border: "1px solid #2d3540", color: "#b4bac2", padding: "4px 9px", fontFamily: "inherit", fontSize: 10, fontWeight: 600, letterSpacing: "0.08em", cursor: "pointer", borderRadius: 3 },
+      variancePill: { border: "1px solid", padding: "4px 8px", borderRadius: 3, fontSize: 10, fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, letterSpacing: "0.04em", whiteSpace: "nowrap" },
+      modelStatsRow: { display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 0, padding: 0, background: "#1a1f26", borderRadius: 4, marginBottom: 10, border: "1px solid #2d3540", overflow: "hidden" },
+      modelStat: { textAlign: "left", padding: "8px 10px", borderRight: "1px solid #2d3540" },
+      modelStatLabel: { fontSize: 9, letterSpacing: "0.1em", color: "#7a8490", textTransform: "uppercase" },
+      modelStatValue: { fontSize: 12, fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, marginTop: 3 },
+    };
+
+    // Mount
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(<FuturesLadderPlanner />);
+  </script>
+</body>
+</html>
