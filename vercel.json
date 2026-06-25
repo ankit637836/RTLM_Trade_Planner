@@ -6,17 +6,7 @@
     },
     {
       "source": "/(.*)",
-      "destination": "/frontend/dist/$1"
-    }
-  ],
-  "builds": [
-    {
-      "src": "api/index.py",
-      "use": "@vercel/python"
-    },
-    {
-      "src": "frontend/package.json",
-      "use": "@vercel/vite"
+      "destination": "/index.html"
     }
   ]
 }
