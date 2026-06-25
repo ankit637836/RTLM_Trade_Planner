@@ -53,8 +53,15 @@ market_service = MarketDataService()
 
 @app.on_event("startup")
 async def startup_event():
-    init_db()
-    market_service.initialize_cache()
+    try:
+        init_db()
+    except Exception as e:
+        logger.error(f"Failed to initialize database (may be running without DB on Vercel): {e}")
+        
+    try:
+        market_service.initialize_cache()
+    except Exception as e:
+        logger.error(f"Failed to initialize market cache: {e}")
 
 @app.get("/health")
 def health_check():
