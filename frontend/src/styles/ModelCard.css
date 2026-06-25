@@ -1,0 +1,174 @@
+/* frontend/src/styles/ModelCard.css */
+
+.model-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: calc(100vh - 120px);
+}
+
+.mc-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.mc-title-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mc-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: 0.05em;
+  margin: 0;
+}
+
+.mc-subtitle {
+  font-size: 9px;
+  color: var(--text-secondary);
+}
+
+.mc-hint {
+  font-size: 9px;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.mc-badges {
+  display: flex;
+  gap: 6px;
+}
+
+.mc-badge {
+  border: 1px solid var(--border-color);
+  padding: 4px 8px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+.mc-badge.green { color: var(--buy-color); border-color: var(--buy-color); background: var(--buy-bg-dim); }
+.mc-badge.amber { color: var(--warning-amber); border-color: var(--warning-amber); background: rgba(212, 168, 83, 0.08); }
+.mc-badge.red { color: var(--sell-color); border-color: var(--sell-color); background: var(--sell-bg-dim); }
+
+/* Stats Row */
+.mc-stats-row {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  background: var(--bg-main);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+}
+
+.mc-stat-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 4px;
+  border-right: 1px solid var(--border-color);
+  gap: 4px;
+}
+
+.mc-stat-item:last-child {
+  border-right: none;
+}
+
+.mc-stat-label {
+  font-size: 8px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  text-align: center;
+}
+
+.mc-stat-val {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* Order Plan */
+.mc-order-plan {
+  background: var(--bg-main);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 12px;
+}
+
+.mc-order-header {
+  font-size: 10px;
+  color: var(--text-secondary);
+  letter-spacing: 0.1em;
+  font-weight: 600;
+  margin-bottom: 8px;
+  display: flex;
+  justify-content: space-between;
+}
+
+.mc-order-header-dir {
+  padding: 2px 6px;
+  border-radius: 2px;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.mc-order-header-dir.buy { background: var(--buy-bg-dim); color: var(--buy-color); }
+.mc-order-header-dir.sell { background: var(--sell-bg-dim); color: var(--sell-color); }
+
+.mc-order-table {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mc-order-row {
+  display: grid;
+  grid-template-columns: 50px 50px 20px 80px 1fr 1fr;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.mc-order-val { color: var(--text-primary); }
+.mc-order-val.risk { color: var(--sell-color); }
+.mc-order-val.reward { color: var(--buy-color); }
+.mc-order-val.dim { color: var(--text-dim); }
+
+.mc-order-summary {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border-dim);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.mc-order-summary-val {
+  color: var(--text-primary);
+}
+
+.mc-reset-btn {
+  background: var(--bg-main);
+  border: 1px solid var(--border-color);
+  color: var(--text-body);
+  padding: 4px 8px;
+  border-radius: 3px;
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.mc-reset-btn:hover {
+  border-color: var(--text-primary);
+}

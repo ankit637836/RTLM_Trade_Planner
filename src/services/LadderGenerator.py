@@ -36,7 +36,7 @@ class LadderGenerator:
             raise ValueError(f"Interval must be positive, got {interval}")
         
         if direction == "BUY":
-            if start_price <= stop_price:
+            if start_price < stop_price:
                 raise ValueError(f"For BUY, startPrice ({start_price}) must be > stopPrice ({stop_price})")
             
             # Generate downward from start to stop
@@ -50,7 +50,7 @@ class LadderGenerator:
             return ladder
         
         elif direction == "SELL":
-            if start_price >= stop_price:
+            if start_price > stop_price:
                 raise ValueError(f"For SELL, startPrice ({start_price}) must be < stopPrice ({stop_price})")
             
             # Generate upward from start to stop

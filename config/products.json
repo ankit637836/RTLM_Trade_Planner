@@ -1,0 +1,17 @@
+{
+  "SR3": { "id": "SR3", "qhPrefix": "SRA", "name": "3M SOFR", "exchange": "CME", "tickSize": 0.005, "tickValue": 12.50, "fxRate": 1.000, "usdTickValue": 12.50, "currency": "USD", "category": "STIR" },
+  "SR1": { "id": "SR1", "qhPrefix": "S1R", "name": "1M SOFR", "exchange": "CME", "tickSize": 0.005, "tickValue": 12.50, "fxRate": 1.000, "usdTickValue": 12.50, "currency": "USD", "category": "STIR" },
+  "ZQ":  { "id": "ZQ",  "qhPrefix": "FF", "name": "Fed Funds", "exchange": "CBOT", "tickSize": 0.005, "tickValue": 20.835, "fxRate": 1.000, "usdTickValue": 20.835, "currency": "USD", "category": "STIR" },
+  "I":   { "id": "I",   "qhPrefix": "ER", "name": "Euribor", "exchange": "ICE", "tickSize": 0.005, "tickValue": 12.50, "fxRate": 1.15402, "usdTickValue": 14.42525, "currency": "EUR", "category": "STIR" },
+  "SO3": { "id": "SO3", "qhPrefix": "SON", "name": "3M SONIA", "exchange": "ICE", "tickSize": 0.005, "tickValue": 12.50, "fxRate": 1.32315, "usdTickValue": 16.539375, "currency": "GBP", "category": "STIR" },
+  "SA3": { "id": "SA3", "qhPrefix": "FSR", "name": "3M SARON", "exchange": "ICE", "tickSize": 0.005, "tickValue": 12.50, "fxRate": 1.25213, "usdTickValue": 15.651625, "currency": "CHF", "category": "STIR" },
+  "CRA": { "id": "CRA", "qhPrefix": "CRA", "name": "3M CORRA", "exchange": "MX", "tickSize": 0.005, "tickValue": 12.50, "fxRate": 0.745, "usdTickValue": 9.3125, "currency": "CAD", "category": "STIR" },
+  "IR":  { "id": "IR",  "qhPrefix": "YBA", "name": "Bank Bill", "exchange": "ASX", "tickSize": 0.005, "tickValue": 12.00, "fxRate": 0.654, "usdTickValue": 7.848, "currency": "AUD", "category": "STIR" },
+  "BRN": { "id": "BRN", "qhPrefix": "CO", "name": "Brent Crude", "exchange": "ICE", "tickSize": 0.01, "tickValue": 10.00, "fxRate": 1.000, "usdTickValue": 10.00, "currency": "USD", "category": "Energy" },
+  "CL":  { "id": "CL",  "qhPrefix": "CL", "name": "WTI Crude", "exchange": "NYMEX", "tickSize": 0.01, "tickValue": 10.00, "fxRate": 1.000, "usdTickValue": 10.00, "currency": "USD", "category": "Energy" },
+  "CLBZ":{ "id": "CLBZ","qhPrefix": "CLCO", "name": "WTI/Brent spread", "exchange": "CME", "tickSize": 0.01, "tickValue": 10.00, "fxRate": 1.000, "usdTickValue": 10.00, "currency": "USD", "category": "Energy" },
+  "G":   { "id": "G",   "qhPrefix": "GO", "name": "Gas Oil", "exchange": "ICE", "tickSize": 0.25, "tickValue": 25.00, "fxRate": 1.000, "usdTickValue": 25.00, "currency": "USD", "category": "Energy" },
+  "HO":  { "id": "HO",  "qhPrefix": "HO", "name": "Heating Oil", "exchange": "NYMEX", "tickSize": 0.0001, "tickValue": 4.20, "fxRate": 1.000, "usdTickValue": 4.20, "currency": "USD", "category": "Energy" },
+  "RB":  { "id": "RB",  "qhPrefix": "RB", "name": "RBOB Gasoline", "exchange": "NYMEX", "tickSize": 0.0001, "tickValue": 4.20, "fxRate": 1.000, "usdTickValue": 4.20, "currency": "USD", "category": "Energy" },
+  "NG":  { "id": "NG",  "qhPrefix": "NG", "name": "Natural Gas", "exchange": "NYMEX", "tickSize": 0.001, "tickValue": 10.00, "fxRate": 1.000, "usdTickValue": 10.00, "currency": "USD", "category": "Energy" }
+}

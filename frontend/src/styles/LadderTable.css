@@ -1,0 +1,179 @@
+/* frontend/src/styles/LadderTable.css */
+
+.ladder-container {
+  background: var(--bg-main);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ladder-header {
+  display: flex;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border-color);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-secondary);
+  letter-spacing: 0.05em;
+}
+
+.ladder-header-col {
+  padding: 6px;
+  text-align: center;
+}
+
+.ladder-scroll-area {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  max-height: 520px;
+}
+
+.ladder-row {
+  display: flex;
+  min-height: 18px;
+  border-bottom: 1px solid var(--border-dim);
+  font-family: var(--font-mono);
+  position: relative;
+}
+
+.ladder-row:hover {
+  background: var(--border-color);
+}
+
+.ladder-row.has-lots {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.ladder-row.is-stop {
+  background: var(--sell-bg-dim);
+  border-top: 1px dashed var(--sell-color);
+  border-bottom: 1px dashed var(--sell-color);
+}
+
+.ladder-row.is-tp {
+  background: var(--buy-bg-dim);
+  border-top: 1px dashed var(--buy-color);
+  border-bottom: 1px dashed var(--buy-color);
+}
+
+/* Five columns layout: far-left | left | mid | right | far-right */
+.ladder-col-far-left {
+  flex: 1 1 15%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.ladder-col-left {
+  flex: 1 1 25%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 4px;
+  position: relative;
+}
+
+.ladder-col-mid {
+  flex: 0 0 130px;
+  background: var(--bg-card);
+  border-left: 1px solid var(--border-color);
+  border-right: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.ladder-col-right {
+  flex: 1 1 25%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 0 4px;
+  position: relative;
+}
+
+.ladder-col-far-right {
+  flex: 1 1 15%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.ladder-price {
+  font-size: 11px;
+  color: var(--text-primary);
+  font-weight: 600;
+  z-index: 2;
+}
+
+.ladder-price.dim {
+  color: var(--text-dim);
+  font-weight: 400;
+}
+
+.ladder-price.marker {
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.ladder-price.marker.stop { color: var(--sell-color); }
+.ladder-price.marker.tp { color: var(--buy-color); }
+
+.ladder-ticks {
+  font-size: 8px;
+  color: var(--text-dim);
+}
+
+/* Visual Bars */
+.lot-bar-container {
+  position: absolute;
+  top: 1px;
+  bottom: 1px;
+  display: flex;
+  align-items: stretch;
+  z-index: 1;
+}
+
+.lot-bar-container.buy { left: 0; right: 0; justify-content: flex-end; }
+.lot-bar-container.sell { left: 0; right: 0; justify-content: flex-start; }
+
+.lot-bar-fill {
+  height: 100%;
+}
+
+.lot-bar-fill.buy { background: rgba(95, 184, 120, 0.2); border-right: 2px solid var(--buy-color); }
+.lot-bar-fill.sell { background: rgba(214, 104, 104, 0.2); border-left: 2px solid var(--sell-color); }
+
+.lot-text {
+  font-size: 11px;
+  font-weight: 700;
+  z-index: 2;
+  position: relative;
+}
+.lot-text.buy { color: var(--buy-color); }
+.lot-text.sell { color: var(--sell-color); }
+
+.manual-input {
+  background: var(--bg-main);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  width: 40px;
+  text-align: center;
+  padding: 2px;
+  border-radius: 2px;
+  z-index: 3;
+}
+.manual-input:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+}

@@ -1,0 +1,212 @@
+/* frontend/src/styles/Sidebar.css */
+
+.sidebar-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+}
+
+.section {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 10px;
+}
+
+.section-title {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--text-secondary);
+  font-weight: 600;
+  margin-bottom: 8px;
+  margin-top: 0;
+}
+
+/* AI Prompt */
+.ai-prompt {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ai-textarea {
+  background: var(--bg-main);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  padding: 6px;
+  resize: vertical;
+  min-height: 40px;
+}
+
+.ai-btn {
+  background: var(--bg-blue-dim);
+  border: 1px solid var(--accent-blue);
+  color: var(--accent-blue);
+  border-radius: 3px;
+  padding: 4px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+}
+
+/* Buttons Grid */
+.btn-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.btn-grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+}
+
+.btn-grid-8 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+}
+
+.toggle-btn {
+  background: var(--bg-main);
+  border: 1px solid var(--border-color);
+  color: var(--text-body);
+  padding: 6px 4px;
+  border-radius: 3px;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.2s;
+}
+
+.toggle-btn:hover {
+  border-color: var(--text-dim);
+}
+
+.toggle-btn.active-blue {
+  background: var(--bg-blue-dim);
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
+}
+
+.toggle-btn.active-buy {
+  background: var(--buy-bg-dim);
+  border-color: var(--buy-color);
+  color: var(--buy-color);
+}
+
+.toggle-btn.active-sell {
+  background: var(--sell-bg-dim);
+  border-color: var(--sell-color);
+  color: var(--sell-color);
+}
+
+.prod-btn {
+  padding: 7px 4px;
+  font-family: var(--font-mono);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.prod-exc {
+  font-size: 9px;
+  font-family: var(--font-sans);
+  opacity: 0.6;
+}
+
+/* Contract Specs */
+.specs-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.spec-box {
+  background: var(--bg-main);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.spec-label {
+  font-size: 9px;
+  color: var(--text-secondary);
+}
+
+.spec-val {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.spec-val.highlight {
+  color: var(--accent-blue);
+}
+
+/* Form Inputs */
+.input-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  position: relative;
+}
+
+.input-label {
+  font-size: 9px;
+  color: var(--text-secondary);
+  letter-spacing: 0.05em;
+}
+
+.num-input {
+  background: var(--bg-main);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 7px 9px;
+  border-radius: 3px;
+  width: 100%;
+}
+
+.num-input:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+}
+
+.rr-display {
+  background: var(--bg-main);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+}
+
+.rr-val {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--accent-blue);
+  font-size: 14px;
+}

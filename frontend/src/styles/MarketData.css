@@ -1,0 +1,187 @@
+/* frontend/src/styles/MarketData.css */
+
+.md-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 16px;
+  gap: 16px;
+  overflow-y: auto;
+}
+
+.md-product-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 8px;
+}
+
+.md-prod-btn {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  color: var(--text-body);
+  padding: 12px 8px;
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.md-prod-btn:hover {
+  border-color: var(--accent-blue);
+}
+
+.md-prod-btn.active {
+  background: var(--bg-blue-dim);
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
+}
+
+.md-prod-name {
+  font-size: 14px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+
+.md-prod-desc {
+  font-size: 9px;
+  color: var(--text-secondary);
+}
+
+/* Selector Area */
+.md-selector-area {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.md-custom-dropdown {
+  position: relative;
+  width: 300px;
+}
+
+.md-search-input {
+  width: 100%;
+  background: var(--bg-main);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  padding: 8px 12px;
+  border-radius: 4px;
+}
+
+.md-search-input:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+}
+
+.md-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: var(--bg-main);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  max-height: 400px;
+  overflow-y: auto;
+  z-index: 100;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+}
+
+.md-dropdown-group-label {
+  padding: 8px 12px;
+  font-size: 10px;
+  color: var(--text-secondary);
+  font-weight: 700;
+  background: var(--bg-card);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.md-dropdown-item {
+  padding: 8px 12px 8px 24px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all 0.1s;
+}
+
+.md-dropdown-item:hover {
+  background: var(--bg-blue-dim);
+  color: var(--accent-blue);
+}
+
+.md-refresh-btn {
+  background: var(--bg-blue-dim);
+  border: 1px solid var(--accent-blue);
+  color: var(--accent-blue);
+  padding: 8px 16px;
+  border-radius: 4px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-left: auto;
+}
+
+/* Data Layout */
+.md-data-layout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.md-panel {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.md-panel-title {
+  font-size: 11px;
+  color: var(--text-secondary);
+  letter-spacing: 0.1em;
+  font-weight: 600;
+  margin: 0;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.md-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.md-table td {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-dim);
+}
+
+.md-table td:first-child {
+  color: var(--text-secondary);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.md-table td:last-child {
+  text-align: right;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.md-table tr:last-child td {
+  border-bottom: none;
+}
