@@ -9,6 +9,8 @@ const Simulator = ({ formData, entryModels, activeSpec }) => {
   const [upperRatio, setUpperRatio] = useState(2);
   const [levelSplitPct, setLevelSplitPct] = useState(50);
   const [maxTrips, setMaxTrips] = useState(100);
+  const [zoneStartAnchor, setZoneStartAnchor] = useState('AVG'); // 'AVG', 'FILL', 'CUSTOM'
+  const [customZoneStartPrice, setCustomZoneStartPrice] = useState('');
 
   const [simState, setSimState] = useState(null);
 
@@ -36,6 +38,8 @@ const Simulator = ({ formData, entryModels, activeSpec }) => {
           upperRatio,
           levelSplitPct,
           maxTrips,
+          zoneStartAnchor,
+          customZoneStartPrice
       }
     };
     try {
@@ -71,6 +75,8 @@ const Simulator = ({ formData, entryModels, activeSpec }) => {
         setUpperRatio(selected.state_payload.upperRatio);
         setLevelSplitPct(selected.state_payload.levelSplitPct);
         setMaxTrips(selected.state_payload.maxTrips);
+        setZoneStartAnchor(selected.state_payload.zoneStartAnchor || 'AVG');
+        setCustomZoneStartPrice(selected.state_payload.customZoneStartPrice || '');
         setSessionName(selected.name);
     }
   };
@@ -92,6 +98,14 @@ const Simulator = ({ formData, entryModels, activeSpec }) => {
 
   const isBuy = formData.direction === 'BUY';
   const interval = parseFloat(formData.interval) || 0.005;
+
+  const getPrecision = (tickSize) => {
+    if (!tickSize) return 4;
+    const str = tickSize.toString();
+    return str.includes('.') ? Math.max(3, str.split('.')[1].length) : 3;
+  };
+  const precision = getPrecision(activeSpec?.tickSize);
+
   const tickValue = activeSpec ? parseFloat(activeSpec.usdTickValue) : 12.5;
   const tpPrice = parseFloat(formData.tp_price);
   const stopPrice = parseFloat(formData.stop_price) || 0;
@@ -261,15 +275,26 @@ const Simulator = ({ formData, entryModels, activeSpec }) => {
   useEffect(() => {
     if (!simState || simState.inventory <= 0) return;
     
-    const referencePrice = simState.isRescueMode ? stopPrice : simState.coreAvgPrice;
     const numLevels = simState.isRescueMode ? (simState.rescueLevels || simState.initialNumLevels) : 0;
     
-    setSimState(prev => ({
-      ...prev,
-      exits: calculateExits(referencePrice, prev.currentPrice, prev.inventory, prev.isRescueMode, numLevels)
-    }));
+    setSimState(prev => {
+      // Resolve reference price based on anchor type
+      let resolvedReferencePrice = prev.coreAvgPrice; // Default to AVG
+      if (prev.isRescueMode) {
+        resolvedReferencePrice = stopPrice;
+      } else if (zoneStartAnchor === 'MKT') {
+        resolvedReferencePrice = prev.currentPrice;
+      } else if (zoneStartAnchor === 'CUSTOM' && customZoneStartPrice !== '') {
+        resolvedReferencePrice = parseFloat(customZoneStartPrice) || prev.coreAvgPrice;
+      }
+      
+      return {
+        ...prev,
+        exits: calculateExits(resolvedReferencePrice, prev.currentPrice, prev.inventory, prev.isRescueMode, numLevels)
+      };
+    });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [exitType, lowerRatio, upperRatio, levelSplitPct]);
+  }, [exitType, lowerRatio, upperRatio, levelSplitPct, zoneStartAnchor, customZoneStartPrice]);
 
   const handleTick = (moveDir) => {
     if (!simState) return;
@@ -375,8 +400,14 @@ const Simulator = ({ formData, entryModels, activeSpec }) => {
              newState.exits.sort((a, b) => isBuy ? a.price - b.price : b.price - a.price);
           }
         } else {
-          // Core entry fill! Recalculate full exit ladder anchored to new core avg entry price
-          newState.exits = calculateExits(newState.coreAvgPrice, newState.currentPrice, newState.inventory);
+          // Core entry fill! Recalculate full exit ladder anchored to appropriate reference
+          let resolvedReferencePrice = newState.coreAvgPrice;
+          if (zoneStartAnchor === 'MKT') {
+            resolvedReferencePrice = newPrice;
+          } else if (zoneStartAnchor === 'CUSTOM' && customZoneStartPrice !== '') {
+            resolvedReferencePrice = parseFloat(customZoneStartPrice) || newState.coreAvgPrice;
+          }
+          newState.exits = calculateExits(resolvedReferencePrice, newState.currentPrice, newState.inventory);
         }
       }
     }
@@ -457,6 +488,20 @@ const Simulator = ({ formData, entryModels, activeSpec }) => {
               <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
                 <input className="rt-input" type="number" value={levelSplitPct} onChange={e => setLevelSplitPct(Math.max(0, Math.min(100, parseInt(e.target.value) || 0)))} style={{ width: '50px', padding: '4px', textAlign: 'center' }} />
                 <span style={{ color: 'var(--text-secondary)' }}>%</span>
+              </div>
+            </div>
+
+            <div className="rt-input-group">
+              <span className="rt-label">ZONE START ANCHOR</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                <select className="rt-input" value={zoneStartAnchor} onChange={e => setZoneStartAnchor(e.target.value)} style={{ padding: '4px' }}>
+                  <option value="AVG">Average Price</option>
+                  <option value="MKT">Market Price</option>
+                  <option value="CUSTOM">Custom Price</option>
+                </select>
+                {zoneStartAnchor === 'CUSTOM' && (
+                  <input className="rt-input" type="number" step={interval} value={customZoneStartPrice} onChange={e => setCustomZoneStartPrice(e.target.value)} style={{ width: '70px', padding: '4px' }} placeholder="Price" />
+                )}
               </div>
             </div>
           </div>
@@ -583,12 +628,18 @@ const Simulator = ({ formData, entryModels, activeSpec }) => {
               <div className="ladder-scroll-area" style={{ maxHeight: '450px', overflowY: 'auto' }}>
                 {(() => {
                   let ladderRows = [];
-                  let p = Math.max(tpPrice + interval * 3, simState.currentPrice + interval * 3); // Start a bit above
-                  const lowestEntry = simState.activeBuys.length > 0 ? Math.min(...simState.activeBuys.map(b => b.price)) : stopPrice;
-                  const bottomPrice = Math.min(lowestEntry, stopPrice) - interval * 3;
-                  const maxLots = simState.inventory > 0 ? Math.max(simState.inventory, 10) : 10;
-
-                  const totalTicks = Math.abs(p - bottomPrice) / interval;
+                  const allPrices = [
+                    tpPrice, 
+                    stopPrice, 
+                    simState.currentPrice,
+                    ...(simState.activeBuys || []).map(b => b.price),
+                    ...(simState.exits || []).map(e => e.price)
+                  ];
+                  let highP = Math.max(...allPrices) + interval * 3;
+                  let lowP = Math.min(...allPrices) - interval * 3;
+                  
+                  let p = highP;
+                  const totalTicks = Math.abs(highP - lowP) / interval;
                   if (totalTicks > 500) {
                     return (
                       <div style={{padding: '40px 20px', textAlign: 'center', color: 'var(--sell-color)', fontFamily: 'var(--font-mono)', fontSize: '11px', lineHeight: '1.6'}}>
@@ -599,8 +650,10 @@ const Simulator = ({ formData, entryModels, activeSpec }) => {
                     );
                   }
 
-                  while (p >= bottomPrice) {
-                    const price = p;
+                  const maxLots = simState.inventory > 0 ? Math.max(simState.inventory, 10) : 10;
+
+                  while (p >= lowP - 1e-9) {
+                    const price = Math.round(p * 10000) / 10000;
                     const isCurrent = closeEnough(price, simState.currentPrice);
                     
                     const exitMatch = simState.exits.find(e => closeEnough(e.price, price));
@@ -623,7 +676,7 @@ const Simulator = ({ formData, entryModels, activeSpec }) => {
                             <span style={{color: 'var(--warning-amber)', fontSize: 9, fontWeight: 700}}>▶ AVG</span>
                           </div>
                         )}
-                        <span className={`ladder-price ${!exitMatch && !buyMatch && !isCurrent ? 'dim' : ''}`} style={isCurrent ? {color: 'var(--accent-blue)', fontWeight: 'bold'} : {}}>{price.toFixed(4)}</span>
+                        <span className={`ladder-price ${!exitMatch && !buyMatch && !isCurrent ? 'dim' : ''}`} style={isCurrent ? {color: 'var(--accent-blue)', fontWeight: 'bold'} : {}}>{price.toFixed(precision)}</span>
                         {isCurrent && (
                           <div style={{ position: 'absolute', right: 4, display: 'flex', alignItems: 'center' }}>
                             <span style={{color: 'var(--accent-blue)', fontSize: 9, fontWeight: 700}}>MKT ◀</span>
@@ -691,12 +744,17 @@ const Simulator = ({ formData, entryModels, activeSpec }) => {
                         <div className="ladder-col-left">
                           {renderBid()}
                         </div>
+
+                        {/* MIDDLE COLUMN (PRICE) */}
                         <div className="ladder-col-mid">
                           {midCol}
                         </div>
+
                         <div className="ladder-col-right">
                           {renderAsk()}
                         </div>
+                        
+                        {/* FAR RIGHT COLUMN (TK->SL/TP) */}
                         <div className="ladder-col-far-right">
                           <span className="ladder-ticks">{isBuy ? slTicks : tpTicks}</span>
                         </div>

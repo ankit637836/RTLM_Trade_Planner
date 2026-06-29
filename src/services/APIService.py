@@ -103,6 +103,7 @@ class ExitSolveRequest(BaseModel):
     rt_spacing_ticks: int = 10
     rt_lots_per_band: int = 1
     crossing_override: Optional[int] = None
+    rt_start_price: Optional[float] = None
     entry_models: List[Dict]
 
 class TemplateCreate(BaseModel):
@@ -253,7 +254,8 @@ def solve_exit(req: ExitSolveRequest):
         exit_mode=req.exit_mode,
         rt_spacing_ticks=req.rt_spacing_ticks,
         rt_lots_per_band=req.rt_lots_per_band,
-        crossing_override=req.crossing_override
+        crossing_override=req.crossing_override,
+        rt_start_price=req.rt_start_price
     )
     
     return {"status": "success", "results": results}
@@ -272,3 +274,4 @@ def get_ohlc(contract_code: str):
     if not data:
         raise HTTPException(status_code=404, detail="OHLC not found")
     return {"status": "success", "data": data}
+# Trigger reload

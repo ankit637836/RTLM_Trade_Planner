@@ -5,6 +5,7 @@
   "I":   { "id": "I",   "qhPrefix": "ER", "name": "Euribor", "exchange": "ICE", "tickSize": 0.005, "tickValue": 12.50, "fxRate": 1.15402, "usdTickValue": 14.42525, "currency": "EUR", "category": "STIR" },
   "SO3": { "id": "SO3", "qhPrefix": "SON", "name": "3M SONIA", "exchange": "ICE", "tickSize": 0.005, "tickValue": 12.50, "fxRate": 1.32315, "usdTickValue": 16.539375, "currency": "GBP", "category": "STIR" },
   "SA3": { "id": "SA3", "qhPrefix": "FSR", "name": "3M SARON", "exchange": "ICE", "tickSize": 0.005, "tickValue": 12.50, "fxRate": 1.25213, "usdTickValue": 15.651625, "currency": "CHF", "category": "STIR" },
+  "ER3": { "id": "ER3", "qhPrefix": "FER", "name": "3M ESTR", "exchange": "ICE", "tickSize": 0.0025, "tickValue": 6.25, "fxRate": 1.1405, "usdTickValue": 7.128125, "currency": "EUR", "category": "STIR" },
   "CRA": { "id": "CRA", "qhPrefix": "CRA", "name": "3M CORRA", "exchange": "MX", "tickSize": 0.005, "tickValue": 12.50, "fxRate": 0.745, "usdTickValue": 9.3125, "currency": "CAD", "category": "STIR" },
   "IR":  { "id": "IR",  "qhPrefix": "YBA", "name": "Bank Bill", "exchange": "ASX", "tickSize": 0.01, "tickValue": 25.00, "fxRate": 0.6888, "usdTickValue": 17.22, "currency": "AUD", "category": "STIR" },
   "BRN": { "id": "BRN", "qhPrefix": "CO", "name": "Brent Crude", "exchange": "ICE", "tickSize": 0.01, "tickValue": 10.00, "fxRate": 1.000, "usdTickValue": 10.00, "currency": "USD", "category": "Energy" },

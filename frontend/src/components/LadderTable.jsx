@@ -6,24 +6,31 @@ const LadderTable = ({ model, formData, activeSpec, isManual, onUpdateManualLots
   const { direction, stop_price, tp_price } = formData;
   const isBuy = direction === 'BUY';
   
+  const getPrecision = (tickSize) => {
+    if (!tickSize) return 4;
+    const str = tickSize.toString();
+    return str.includes('.') ? Math.max(3, str.split('.')[1].length) : 3;
+  };
+  const precision = getPrecision(activeSpec?.tickSize);
+  
   // Calculate total visible range extending from SL to TP + padding
   const visibleLadder = useMemo(() => {
     if (!model || !model.ladder) return [];
     
-    // We want to generate a full visual ladder including TP and SL
     const ladder = [];
     const step = activeSpec.tickSize;
-    let p = isBuy ? Math.max(tp_price + step*3, model.ladder[0] + step*3) : Math.min(tp_price - step*3, model.ladder[0] - step*3);
-    const endP = isBuy ? stop_price - step*3 : stop_price + step*3;
     
-    if (isBuy) {
-      const totalTicks = (p - endP) / step;
-      if (totalTicks > 500) return null;
-      while (p >= endP - 1e-9) { ladder.push(Math.round(p * 10000)/10000); p -= step; }
-    } else {
-      const totalTicks = (endP - p) / step;
-      if (totalTicks > 500) return null;
-      while (p <= endP + 1e-9) { ladder.push(Math.round(p * 10000)/10000); p += step; }
+    const allPrices = [tp_price, stop_price, ...model.ladder];
+    let highP = Math.max(...allPrices) + step * 3;
+    let lowP = Math.min(...allPrices) - step * 3;
+    
+    const totalTicks = (highP - lowP) / step;
+    if (totalTicks > 500) return null;
+    
+    let p = highP;
+    while (p >= lowP - 1e-9) { 
+      ladder.push(Math.round(p * 10000) / 10000); 
+      p -= step; 
     }
     return ladder;
   }, [model, tp_price, stop_price, activeSpec, isBuy]);
@@ -107,7 +114,7 @@ const LadderTable = ({ model, formData, activeSpec, isManual, onUpdateManualLots
                  isTp ? <span className="ladder-price marker tp">◆ TP</span> :
                  <>
                    {isAvg && <span style={{position: 'absolute', left: 6, color: 'var(--warning-amber)', fontSize: 9, fontWeight: 700, zIndex: 5}}>▶ AVG</span>}
-                   <span className={`ladder-price ${lots > 0 ? '' : 'dim'}`}>{price.toFixed(3)}</span>
+                   <span className={`ladder-price ${lots > 0 ? '' : 'dim'}`}>{price.toFixed(precision)}</span>
                  </>}
               </div>
 

@@ -105,10 +105,10 @@ class ExitPlanner:
     # RANGE TRADER EXIT METHOD
     # ========================================================================
     
-    def build_rt_bands(self, avg_entry: float, tp_price: float,
+    def build_rt_bands(self, start_price: float, tp_price: float,
                       rt_spacing_ticks: int) -> List[RTBand]:
         """
-        Build range trader bands between avg entry and TP
+        Build range trader bands between start_price and TP
         
         Band structure for LONG:
         - Entry: avg_entry
@@ -117,7 +117,7 @@ class ExitPlanner:
         - ... continue until TP
         
         Args:
-            avg_entry: Average entry price
+            start_price: The price to start building bands from
             tp_price: Take profit price
             rt_spacing_ticks: Spacing between bands in ticks
         
@@ -128,7 +128,7 @@ class ExitPlanner:
         direction_mult = 1 if self.is_buy else -1
         
         bands = []
-        current_price = avg_entry + direction_mult * spacing
+        current_price = start_price + direction_mult * spacing
         band_id = 1
         
         max_bands = 200
@@ -155,7 +155,8 @@ class ExitPlanner:
     def simulate_range_trader_exit(self, total_lots: int, avg_entry: float,
                                   stop_price: float, tp_price: float,
                                   rt_spacing_ticks: int, rt_lots_per_band: int,
-                                  crossing_override: Optional[int] = None) -> Dict:
+                                  crossing_override: Optional[int] = None,
+                                  rt_start_price: Optional[float] = None) -> Dict:
         """
         Simulate range trader exit strategy
         
@@ -185,7 +186,8 @@ class ExitPlanner:
             }
         
         # Build bands
-        bands = self.build_rt_bands(avg_entry, tp_price, rt_spacing_ticks)
+        band_start = rt_start_price if rt_start_price is not None else avg_entry
+        bands = self.build_rt_bands(band_start, tp_price, rt_spacing_ticks)
         
         if not bands:
             return {
@@ -279,7 +281,8 @@ class ExitPlanner:
                                      exit_mode: str = 'direct',
                                      rt_spacing_ticks: int = 10,
                                      rt_lots_per_band: int = 1,
-                                     crossing_override: Optional[int] = None) -> Dict[str, Dict]:
+                                     crossing_override: Optional[int] = None,
+                                     rt_start_price: Optional[float] = None) -> Dict[str, Dict]:
         """
         Calculate exit for all 4 entry models
         
