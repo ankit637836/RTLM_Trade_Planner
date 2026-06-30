@@ -170,34 +170,45 @@ function App() {
       <div className="market-data-bar">
         {headerOHLC ? (
           <>
-            <div className="md-item">
-              <span className="md-label">FRONT</span>
-              <span className="md-value" style={{color: 'var(--accent-blue)'}}>{headerOHLC.contract}</span>
-            </div>
-            <div className="md-item"><span className="md-label">LAST</span><span className="md-value">{headerOHLC.close.toFixed(3)}</span></div>
-            <div className="md-item"><span className="md-label">HIGH</span><span className="md-value" style={{color: 'var(--buy-color)'}}>{headerOHLC.high.toFixed(3)}</span></div>
-            <div className="md-item"><span className="md-label">LOW</span><span className="md-value" style={{color: 'var(--sell-color)'}}>{headerOHLC.low.toFixed(3)}</span></div>
-            <div className="md-item"><span className="md-label">ATR10</span><span className="md-value">0.035</span></div>
-            <div className="md-item"><span className="md-label">RVOL20</span><span className="md-value">1.12</span></div>
-            <div className="md-item">
-              <span className="md-label">REGIME</span>
-              <span className="md-value" style={{color: headerOHLC.close >= headerOHLC.open ? 'var(--buy-color)' : 'var(--sell-color)'}}>
-                {headerOHLC.close >= headerOHLC.open ? 'UPTREND' : 'DOWNTREND'} 
-                <span style={{fontSize: '10px', marginLeft: '6px', opacity: 0.8}}>
-                  ({headerOHLC.close >= headerOHLC.open ? '+' : '-'}{Math.abs((headerOHLC.close - headerOHLC.open) * 100).toFixed(1)} bps)
+            <div className="md-left-items">
+              <div className="md-item">
+                <span className="md-label">FRONT</span>
+                <span className="md-value" style={{color: 'var(--accent-blue)'}}>{headerOHLC.contract}</span>
+              </div>
+              <div className="md-item"><span className="md-label">LAST</span><span className="md-value">{headerOHLC.close.toFixed(3)}</span></div>
+              <div className="md-item"><span className="md-label">HIGH</span><span className="md-value" style={{color: 'var(--buy-color)'}}>{headerOHLC.high.toFixed(3)}</span></div>
+              <div className="md-item"><span className="md-label">LOW</span><span className="md-value" style={{color: 'var(--sell-color)'}}>{headerOHLC.low.toFixed(3)}</span></div>
+              <div className="md-item"><span className="md-label">ATR10</span><span className="md-value">0.035</span></div>
+              <div className="md-item"><span className="md-label">RVOL20</span><span className="md-value">1.12</span></div>
+              <div className="md-item">
+                <span className="md-label">REGIME</span>
+                <span className="md-value" style={{color: headerOHLC.close >= headerOHLC.open ? 'var(--buy-color)' : 'var(--sell-color)'}}>
+                  {headerOHLC.close >= headerOHLC.open ? 'UPTREND' : 'DOWNTREND'} 
+                  <span style={{fontSize: '10px', marginLeft: '6px', opacity: 0.8}}>
+                    ({headerOHLC.close >= headerOHLC.open ? '+' : '-'}{Math.abs((headerOHLC.close - headerOHLC.open) * 100).toFixed(1)} bps)
+                  </span>
                 </span>
-              </span>
+              </div>
             </div>
             <div className="md-product-center">
               {activeSpec.name}
             </div>
+            <div className="md-right-items"></div>
           </>
         ) : (
-          <div className="md-item">
-            <span className="md-label">
-              {headerError ? `NO OHLC DATA FOR ${frontContractCode}` : 'LOADING MARKET DATA...'}
-            </span>
-          </div>
+          <>
+            <div className="md-left-items">
+              <div className="md-item">
+                <span className="md-label">
+                  {headerError ? `NO OHLC DATA FOR ${frontContractCode}` : 'LOADING MARKET DATA...'}
+                </span>
+              </div>
+            </div>
+            <div className="md-product-center">
+              {activeSpec.name}
+            </div>
+            <div className="md-right-items"></div>
+          </>
         )}
       </div>
 
