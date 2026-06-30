@@ -1,6 +1,7 @@
 // frontend/src/App.jsx
 import React, { useState, useEffect, useMemo } from 'react';
 import './App.css';
+import { Analytics } from '@vercel/analytics/react';
 
 import Sidebar from './components/Sidebar';
 import EntryPlanner from './components/EntryPlanner';
@@ -257,6 +258,7 @@ function App() {
           </div>
         </div>
       </div>
+      <Analytics />
     </div>
   );
 }
