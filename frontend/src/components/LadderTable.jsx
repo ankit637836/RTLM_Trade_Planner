@@ -1,6 +1,52 @@
 // frontend/src/components/LadderTable.jsx
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import '../styles/LadderTable.css';
+
+const ManualLotInput = ({ initialLots, onChange }) => {
+  const [localVal, setLocalVal] = useState(initialLots);
+  const timerRef = useRef(null);
+
+  useEffect(() => {
+    setLocalVal(initialLots);
+  }, [initialLots]);
+
+  const handleChange = (e) => {
+    const val = e.target.value;
+    setLocalVal(val);
+    
+    if (timerRef.current) clearTimeout(timerRef.current);
+    
+    timerRef.current = setTimeout(() => {
+      if (val === '') {
+        onChange(0);
+      } else {
+        const parsed = parseInt(val, 10);
+        onChange(!isNaN(parsed) && parsed >= 0 ? parsed : 0);
+      }
+    }, 250); // 250ms debounce for smooth typing
+  };
+
+  const handleBlur = () => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    const parsed = parseInt(localVal, 10);
+    onChange(isNaN(parsed) || parsed < 0 ? 0 : parsed);
+  };
+
+  // Convert 0 to empty string for easy backspacing
+  const displayVal = localVal === 0 || localVal === '0' ? '' : localVal;
+
+  return (
+    <input 
+      className="manual-input" 
+      type="number" 
+      min="0" 
+      value={displayVal} 
+      onChange={handleChange} 
+      onBlur={handleBlur}
+    />
+  );
+};
+
 
 const LadderTable = ({ model, formData, activeSpec, isManual, onUpdateManualLots }) => {
   const { direction, stop_price, tp_price } = formData;
@@ -37,12 +83,10 @@ const LadderTable = ({ model, formData, activeSpec, isManual, onUpdateManualLots
 
   const maxLots = model?.lots ? Math.max(...model.lots) : 1;
 
-  const handleManualChange = (idx, value) => {
+  const handleManualChange = (idx, parsedValue) => {
     if (!onUpdateManualLots || !model.lots) return;
-    const parsed = parseInt(value, 10);
-    if (isNaN(parsed) || parsed < 0) return;
     const newLots = [...model.lots];
-    newLots[idx] = parsed;
+    newLots[idx] = parsedValue;
     onUpdateManualLots(newLots);
   };
 
@@ -100,7 +144,7 @@ const LadderTable = ({ model, formData, activeSpec, isManual, onUpdateManualLots
                       </div>
                     )}
                     {isManual && levelIdx >= 0 ? (
-                      <input className="manual-input" type="number" min="0" value={lots} onChange={e => handleManualChange(levelIdx, e.target.value)} />
+                      <ManualLotInput initialLots={lots} onChange={val => handleManualChange(levelIdx, val)} />
                     ) : (
                       lots > 0 && <span className="lot-text buy">{lots}</span>
                     )}
@@ -128,7 +172,7 @@ const LadderTable = ({ model, formData, activeSpec, isManual, onUpdateManualLots
                       </div>
                     )}
                     {isManual && levelIdx >= 0 ? (
-                      <input className="manual-input" type="number" min="0" value={lots} onChange={e => handleManualChange(levelIdx, e.target.value)} />
+                      <ManualLotInput initialLots={lots} onChange={val => handleManualChange(levelIdx, val)} />
                     ) : (
                       lots > 0 && <span className="lot-text sell">{lots}</span>
                     )}

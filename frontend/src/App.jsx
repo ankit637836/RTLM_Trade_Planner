@@ -176,10 +176,11 @@ function App() {
                 <span className="md-value" style={{color: 'var(--accent-blue)'}}>{headerOHLC.contract}</span>
               </div>
               <div className="md-item"><span className="md-label">LAST</span><span className="md-value">{headerOHLC.close.toFixed(3)}</span></div>
+              <div className="md-item"><span className="md-label">OPEN</span><span className="md-value">{headerOHLC.open.toFixed(3)}</span></div>
               <div className="md-item"><span className="md-label">HIGH</span><span className="md-value" style={{color: 'var(--buy-color)'}}>{headerOHLC.high.toFixed(3)}</span></div>
               <div className="md-item"><span className="md-label">LOW</span><span className="md-value" style={{color: 'var(--sell-color)'}}>{headerOHLC.low.toFixed(3)}</span></div>
-              <div className="md-item"><span className="md-label">ATR10</span><span className="md-value">0.035</span></div>
-              <div className="md-item"><span className="md-label">RVOL20</span><span className="md-value">1.12</span></div>
+              <div className="md-item"><span className="md-label">ATR14</span><span className="md-value">{headerOHLC.atr_14 !== undefined ? headerOHLC.atr_14.toFixed(3) : '-'}</span></div>
+              <div className="md-item"><span className="md-label">RVOL14</span><span className="md-value">{headerOHLC.rvol_14 !== undefined ? headerOHLC.rvol_14.toFixed(2) : '-'}</span></div>
               <div className="md-item">
                 <span className="md-label">REGIME</span>
                 <span className="md-value" style={{color: headerOHLC.close >= headerOHLC.open ? 'var(--buy-color)' : 'var(--sell-color)'}}>
@@ -221,6 +222,7 @@ function App() {
             PRODUCTS={productsMap}
             allContracts={allContracts}
             fetchVolatilityData={fetchVolatilityData}
+            frontContractCode={frontContractCode}
           />
         </div>
 
@@ -241,6 +243,7 @@ function App() {
                 error={entryError} 
                 onUpdateManualLots={setManualLots} 
                 activeSpec={activeSpec}
+                headerOHLC={headerOHLC}
               />
             </div>
             

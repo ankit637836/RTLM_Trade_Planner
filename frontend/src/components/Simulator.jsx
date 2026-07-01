@@ -445,7 +445,7 @@ const Simulator = ({ formData, entryModels, activeSpec }) => {
         
         <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
           {/* ROW 1 */}
-          <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'nowrap', alignItems: 'center', overflowX: 'auto', paddingBottom: '4px' }}>
             <div className="rt-input-group">
               <span className="rt-label">ENTRY MODEL</span>
               <div style={{display:'flex', gap:'5px'}}>
@@ -475,15 +475,6 @@ const Simulator = ({ formData, entryModels, activeSpec }) => {
             </div>
 
             <div className="rt-input-group">
-              <span className="rt-label">LOTS DIVISION (L:U)</span>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                <input className="rt-input" type="number" value={lowerRatio} onChange={e => setLowerRatio(Math.max(1, parseInt(e.target.value) || 1))} style={{ width: '40px', padding: '4px', textAlign: 'center' }} />
-                <span style={{ color: 'var(--text-secondary)' }}>:</span>
-                <input className="rt-input" type="number" value={upperRatio} onChange={e => setUpperRatio(Math.max(1, parseInt(e.target.value) || 1))} style={{ width: '40px', padding: '4px', textAlign: 'center' }} />
-              </div>
-            </div>
-
-            <div className="rt-input-group">
               <span className="rt-label">RANGETRADER ZONE %</span>
               <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
                 <input className="rt-input" type="number" value={levelSplitPct} onChange={e => setLevelSplitPct(Math.max(0, Math.min(100, parseInt(e.target.value) || 0)))} style={{ width: '50px', padding: '4px', textAlign: 'center' }} />
@@ -492,9 +483,18 @@ const Simulator = ({ formData, entryModels, activeSpec }) => {
             </div>
 
             <div className="rt-input-group">
+              <span className="rt-label">LOTS DIVISION (L:R)</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                <input className="rt-input" type="number" value={lowerRatio} onChange={e => setLowerRatio(Math.max(1, parseInt(e.target.value) || 1))} style={{ width: '40px', padding: '4px', textAlign: 'center' }} />
+                <span style={{ color: 'var(--text-secondary)' }}>:</span>
+                <input className="rt-input" type="number" value={upperRatio} onChange={e => setUpperRatio(Math.max(1, parseInt(e.target.value) || 1))} style={{ width: '40px', padding: '4px', textAlign: 'center' }} />
+              </div>
+            </div>
+
+            <div className="rt-input-group">
               <span className="rt-label">ZONE START ANCHOR</span>
               <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                <select className="rt-input" value={zoneStartAnchor} onChange={e => setZoneStartAnchor(e.target.value)} style={{ padding: '4px' }}>
+                <select className="rt-input" value={zoneStartAnchor} onChange={e => setZoneStartAnchor(e.target.value)} style={{ padding: '4px', minWidth: '120px' }}>
                   <option value="AVG">Average Price</option>
                   <option value="MKT">Market Price</option>
                   <option value="CUSTOM">Custom Price</option>
@@ -503,6 +503,11 @@ const Simulator = ({ formData, entryModels, activeSpec }) => {
                   <input className="rt-input" type="number" step={interval} value={customZoneStartPrice} onChange={e => setCustomZoneStartPrice(e.target.value)} style={{ width: '70px', padding: '4px' }} placeholder="Price" />
                 )}
               </div>
+            </div>
+
+            <div className="rt-input-group">
+              <span className="rt-label">MAX CHURNS</span>
+              <input className="rt-input" type="number" value={maxTrips} onChange={e => setMaxTrips(parseInt(e.target.value)||100)} style={{width: '60px', padding: '4px', textAlign: 'center'}}/>
             </div>
           </div>
 
@@ -538,11 +543,6 @@ const Simulator = ({ formData, entryModels, activeSpec }) => {
                 <button className="generate-btn" style={{padding: '5px 10px', fontSize: '10px'}} onClick={handleSaveSession}>SAVE</button>
                 <button className="generate-btn" style={{padding: '5px 10px', fontSize: '10px', background: '#8a2b2b'}} onClick={handleDeleteSession}>X</button>
               </div>
-            </div>
-
-            <div className="rt-input-group" style={{ marginBottom: '2px' }}>
-              <span className="rt-label">MAX CHURNS</span>
-              <input className="rt-input" type="number" value={maxTrips} onChange={e => setMaxTrips(parseInt(e.target.value)||100)} style={{width: '60px', padding: '4px', textAlign: 'center'}}/>
             </div>
 
             <button className="md-refresh-btn" onClick={resetSimulator} style={{ marginLeft: 'auto', marginBottom: '2px' }}>

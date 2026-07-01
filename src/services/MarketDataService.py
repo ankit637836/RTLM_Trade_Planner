@@ -245,8 +245,12 @@ class MarketDataService:
                 "high": 99.65,
                 "low": 99.35,
                 "close": 99.45,
+                "atr_14": 0.035,
+                "rvol_14": 1.12,
                 "timestamp": int(datetime.now().timestamp() * 1000),
                 "volume": 12500,
+                "atr_std_ratio": 1.5,
+                "bps_change_20": 12.5,
                 "fetch_time": datetime.now().isoformat()
             }
 
@@ -277,6 +281,50 @@ class MarketDataService:
 
             # Get the most recent bar (first in list as per sorted v2 response)
             latest_bar = data[0]
+            curr_vol = int(latest_bar.get('volume', 0) or 0)
+
+            # Calculate ATR14 and RVOL14
+            atr_14 = 0.0
+            rvol_14 = 0.0
+            if len(data) > 1:
+                trs = []
+                max_days = min(14, len(data) - 1)
+                for i in range(max_days):
+                    curr = data[i]
+                    prev = data[i + 1]
+                    high = float(curr.get('high', 0))
+                    low = float(curr.get('low', 0))
+                    prev_close = float(prev.get('close', 0))
+                    
+                    tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
+                    trs.append(tr)
+                if trs:
+                    atr_14 = sum(trs) / len(trs)
+                
+                volumes = [int(data[i].get('volume', 0) or 0) for i in range(1, max_days + 1)]
+                avg_vol_14 = sum(volumes) / len(volumes) if volumes else 0.0
+                if avg_vol_14 > 0:
+                    rvol_14 = curr_vol / avg_vol_14
+            # Calculate 20-day metrics for Trend vs Noise
+            std_20 = 0.0
+            atr_std_ratio = 0.0
+            bps_change_20 = 0.0
+            if len(data) > 1:
+                max_20 = min(20, len(data) - 1)
+                closes = [float(data[i].get('close', 0)) for i in range(max_20)]
+                
+                if len(closes) > 1:
+                    mean_close = sum(closes) / len(closes)
+                    variance = sum((c - mean_close) ** 2 for c in closes) / (len(closes) - 1)
+                    import math
+                    std_20 = math.sqrt(variance)
+
+                if std_20 > 0:
+                    atr_std_ratio = atr_14 / std_20
+                    
+                latest_close = float(data[0].get('close', 0))
+                historical_close = float(data[max_20].get('close', 0))
+                bps_change_20 = latest_close - historical_close
 
             ohlc = {
                 "contract": contract_code,
@@ -284,8 +332,12 @@ class MarketDataService:
                 "high": float(latest_bar.get('high', 0)),
                 "low": float(latest_bar.get('low', 0)),
                 "close": float(latest_bar.get('close', 0)),
+                "atr_14": round(atr_14, 4),
+                "rvol_14": round(rvol_14, 2),
+                "atr_std_ratio": round(atr_std_ratio, 2),
+                "bps_change_20": round(bps_change_20, 2),
                 "timestamp": int(latest_bar.get('time', 0)),
-                "volume": int(latest_bar.get('volume', 0) or 0),
+                "volume": curr_vol,
                 "fetch_time": datetime.now().isoformat()
             }
 
@@ -300,16 +352,17 @@ class MarketDataService:
 
     def fetch_contract_volatility(self, contract_code: str) -> Optional[Dict]:
         """
-        Fetch OHLC data and compute 14-day Volatility Analytics
-        Returns: {contract, atr_14, trend, bps_change}
+        Fetch OHLC data and compute 20-day Volatility Analytics
+        Returns: {contract, atr_20, std_20, atr_std_ratio, bps_change_20}
         """
         if not self.qh_token:
             logger.warning(f"⚠️ QH_API_TOKEN not set - Generating mock Volatility for {contract_code}")
             return {
                 "contract": contract_code,
-                "atr_14": 0.045,
-                "trend": "UPTREND",
-                "bps_change": 12.5,
+                "atr_20": 0.045,
+                "std_20": 0.030,
+                "atr_std_ratio": 1.5,
+                "bps_change_20": 12.5,
                 "fetch_time": datetime.now().isoformat()
             }
 
@@ -356,9 +409,9 @@ class MarketDataService:
                     instrument_id = instrument.id
                     db_data = db_session.query(OHLCData).filter_by(
                         instrument_id=instrument_id, interval='1D'
-                    ).order_by(desc(OHLCData.qh_timestamp)).limit(15).all()
+                    ).order_by(desc(OHLCData.qh_timestamp)).limit(21).all()
                     
-                    if len(db_data) >= 14:
+                    if len(db_data) >= 20:
                         latest_time = db_data[0].qh_timestamp
                         # If latest data is from today (or last 24h), we have enough
                         if datetime.now().timestamp() * 1000 - latest_time < 86400000:
@@ -395,15 +448,17 @@ class MarketDataService:
                         # Re-query DB after insert
                         db_data = db_session.query(OHLCData).filter_by(
                             instrument_id=instrument_id, interval='1D'
-                        ).order_by(desc(OHLCData.qh_timestamp)).limit(15).all()
+                        ).order_by(desc(OHLCData.qh_timestamp)).limit(21).all()
 
             if not db_data or len(db_data) < 2:
                 logger.warning(f"⚠️ Not enough bars returned/cached for {contract_code}")
                 return None
 
-            # 3. Calculate 14-day ATR from DB objects
+            # 3. Calculate 20-day ATR and STD DEV from DB objects
+            import math
             trs = []
-            max_days = min(14, len(db_data) - 1)
+            closes = []
+            max_days = min(20, len(db_data) - 1)
             
             for i in range(max_days):
                 curr = db_data[i]
@@ -419,21 +474,30 @@ class MarketDataService:
                     abs(low - prev_close)
                 )
                 trs.append(tr)
+                closes.append(float(curr.close_price or 0))
                 
-            atr_14 = sum(trs) / len(trs) if trs else 0.0
+            atr_20 = sum(trs) / len(trs) if trs else 0.0
+            
+            std_20 = 0.0
+            if closes and len(closes) > 1:
+                mean_close = sum(closes) / len(closes)
+                variance = sum((c - mean_close) ** 2 for c in closes) / (len(closes) - 1)
+                std_20 = math.sqrt(variance)
 
-            # 4. Calculate BPS Change and Trend
+            atr_std_ratio = atr_20 / std_20 if std_20 > 0 else 0.0
+
+            # 4. Calculate 20-day BPS Change
             latest_close = float(db_data[0].close_price or 0)
             historical_close = float(db_data[max_days].close_price or 0)
             
-            bps_change = latest_close - historical_close
-            trend = "UPTREND" if bps_change >= 0 else "DOWNTREND"
+            bps_change_20 = latest_close - historical_close
 
             return {
                 "contract": contract_code,
-                "atr_14": round(atr_14, 4),
-                "trend": trend,
-                "bps_change": round(bps_change, 2),
+                "atr_20": round(atr_20, 4),
+                "std_20": round(std_20, 4),
+                "atr_std_ratio": round(atr_std_ratio, 2),
+                "bps_change_20": round(bps_change_20, 2),
                 "fetch_time": datetime.now().isoformat()
             }
 

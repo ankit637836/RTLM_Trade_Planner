@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import '../styles/Sidebar.css';
 
-const Sidebar = ({ formData, setFormData, PRODUCTS, allContracts, fetchVolatilityData }) => {
+const Sidebar = ({ formData, setFormData, PRODUCTS, allContracts, fetchVolatilityData, frontContractCode }) => {
   const [openCategory, setOpenCategory] = useState(PRODUCTS[formData.product]?.category || 'STIR');
   const [volSearchText, setVolSearchText] = useState('');
   const [volSelectedContract, setVolSelectedContract] = useState('');
@@ -71,6 +71,16 @@ const Sidebar = ({ formData, setFormData, PRODUCTS, allContracts, fetchVolatilit
     }
   }, [volSelectedContract, fetchVolatilityData]);
 
+  useEffect(() => {
+    if (frontContractCode) {
+      const activeSpec = PRODUCTS[formData.product];
+      if (activeSpec && (!volSelectedContract || !volSelectedContract.startsWith(activeSpec.qhPrefix))) {
+        setVolSelectedContract(frontContractCode);
+        setVolSearchText(frontContractCode);
+      }
+    }
+  }, [frontContractCode, formData.product, PRODUCTS, volSelectedContract]);
+
   const handleChange = (field, value) => {
     setFormData(prev => ({ ...prev, [field]: value }));
   };
@@ -79,6 +89,10 @@ const Sidebar = ({ formData, setFormData, PRODUCTS, allContracts, fetchVolatilit
     setFormData(prev => {
       let parsed = parseFloat(value);
       if (isNaN(parsed)) parsed = fallback;
+
+      if (prev[field] === parsed) {
+        return prev;
+      }
 
       const next = { ...prev, [field]: parsed };
 
@@ -272,7 +286,7 @@ const Sidebar = ({ formData, setFormData, PRODUCTS, allContracts, fetchVolatilit
             type="text" 
             list="vol-contracts" 
             className="num-input" 
-            placeholder="Search contract... e.g. SR3Z24"
+            placeholder={`Search contract... e.g. ${frontContractCode || 'SRAZ26'}`}
             value={volSearchText}
             onChange={(e) => {
               const val = e.target.value.toUpperCase();
@@ -298,23 +312,29 @@ const Sidebar = ({ formData, setFormData, PRODUCTS, allContracts, fetchVolatilit
           </datalist>
         </div>
         
-        <div style={{ display: 'flex', gap: '4px' }}>
-          <div className="spec-box" style={{ flex: '1 1 30%', padding: '6px' }}>
-            <span className="spec-label" style={{ fontSize: '9px' }}>14D ATR</span>
+        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+          <div className="spec-box" style={{ flex: '1 1 45%', padding: '6px' }}>
+            <span className="spec-label" style={{ fontSize: '9px' }}>20D ATR</span>
             <span className="spec-val" style={{ fontSize: '11px' }}>
-              {volLoading ? '...' : (volData ? volData.atr_14 : '-')}
+              {volLoading ? '...' : (volData ? volData.atr_20 : '-')}
             </span>
           </div>
-          <div className="spec-box" style={{ flex: '1 1 30%', padding: '6px' }}>
-            <span className="spec-label" style={{ fontSize: '9px' }}>Trend (14D)</span>
-            <span className="spec-val" style={{ fontSize: '11px', color: volData?.trend === 'UPTREND' ? 'var(--buy-color)' : (volData?.trend === 'DOWNTREND' ? 'var(--sell-color)' : 'inherit') }}>
-              {volLoading ? '...' : (volData ? volData.trend : '-')}
+          <div className="spec-box" style={{ flex: '1 1 45%', padding: '6px' }}>
+            <span className="spec-label" style={{ fontSize: '9px' }}>20D STD DEV</span>
+            <span className="spec-val" style={{ fontSize: '11px' }}>
+              {volLoading ? '...' : (volData ? volData.std_20 : '-')}
             </span>
           </div>
-          <div className="spec-box" style={{ flex: '1 1 30%', padding: '6px' }}>
-            <span className="spec-label" style={{ fontSize: '9px' }}>14D Bps Δ</span>
-            <span className="spec-val" style={{ fontSize: '11px', color: (volData?.bps_change >= 0) ? 'var(--buy-color)' : (volData?.bps_change < 0 ? 'var(--sell-color)' : 'inherit') }}>
-              {volLoading ? '...' : (volData ? `${volData.bps_change > 0 ? '+' : ''}${volData.bps_change}` : '-')}
+          <div className="spec-box" style={{ flex: '1 1 45%', padding: '6px' }}>
+            <span className="spec-label" style={{ fontSize: '9px' }}>ATR / STD</span>
+            <span className="spec-val" style={{ fontSize: '11px' }}>
+              {volLoading ? '...' : (volData ? volData.atr_std_ratio : '-')}
+            </span>
+          </div>
+          <div className="spec-box" style={{ flex: '1 1 45%', padding: '6px' }}>
+            <span className="spec-label" style={{ fontSize: '9px' }}>20D Bps Δ</span>
+            <span className="spec-val" style={{ fontSize: '11px', color: (volData?.bps_change_20 >= 0) ? 'var(--buy-color)' : (volData?.bps_change_20 < 0 ? 'var(--sell-color)' : 'inherit') }}>
+              {volLoading ? '...' : (volData ? `${volData.bps_change_20 > 0 ? '+' : ''}${volData.bps_change_20}` : '-')}
             </span>
           </div>
         </div>
@@ -401,17 +421,21 @@ const Sidebar = ({ formData, setFormData, PRODUCTS, allContracts, fetchVolatilit
       {/* INTERVAL GAP */}
       <div className="section">
         <h3 className="section-title">INTERVAL GAP</h3>
-        <div className="input-grid">
-          <div className="input-group">
-            <span className="input-label">Ticks</span>
-            <input className="num-input" type="number" min="1" step="1" value={formData.interval_multiplier} 
-                   onChange={e => handleChange('interval_multiplier', parseInt(e.target.value) || 1)}
-                   onBlur={e => handleBlur('interval_multiplier', e.target.value, 1)} />
+        <div className="specs-grid">
+          <div className="spec-box">
+            <span className="spec-label">Ticks Multiplier</span>
+            <input 
+               className="spec-val" 
+               type="number" min="1" step="1" 
+               value={formData.interval_multiplier} 
+               onChange={e => handleChange('interval_multiplier', parseInt(e.target.value) || 1)}
+               onBlur={e => handleBlur('interval_multiplier', e.target.value, 1)} 
+               style={{ background: 'transparent', border: 'none', outline: 'none', width: '100%', padding: 0 }}
+            />
           </div>
-          <div className="input-group">
-            <span className="input-label">Value</span>
-            <input className="num-input dim" type="text" readOnly value={formData.interval} 
-                   style={{ background: 'transparent', cursor: 'not-allowed', opacity: 0.7 }} />
+          <div className="spec-box">
+            <span className="spec-label">Interval Value</span>
+            <span className="spec-val">{formData.interval}</span>
           </div>
         </div>
       </div>

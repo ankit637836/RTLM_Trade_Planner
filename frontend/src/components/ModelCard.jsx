@@ -3,7 +3,7 @@ import React from 'react';
 import '../styles/ModelCard.css';
 import LadderTable from './LadderTable';
 
-const ModelCard = ({ model, formData, activeSpec, isManual, onUpdateManualLots }) => {
+const ModelCard = ({ model, formData, activeSpec, isManual, onUpdateManualLots, headerOHLC }) => {
   if (!model) return null;
 
   const { title, subtitle, lots, ladder, total_lots, total_risk, total_reward, avg_entry, deviation_pct, rr_ratio, risk_per_lot, reward_per_lot } = model;

@@ -3,7 +3,7 @@ import React from 'react';
 import '../styles/EntryPlanner.css';
 import ModelCard from './ModelCard';
 
-const EntryPlanner = ({ formData, models, loading, error, onUpdateManualLots, activeSpec }) => {
+const EntryPlanner = ({ formData, models, loading, error, onUpdateManualLots, activeSpec, headerOHLC }) => {
   if (loading && !models) {
     return <div className="status-container">Calculating models...</div>;
   }
@@ -15,29 +15,104 @@ const EntryPlanner = ({ formData, models, loading, error, onUpdateManualLots, ac
   if (!models) {
     return <div className="status-container">No models calculated.</div>;
   }
+  const getRegimeMessage = () => {
+    if (!headerOHLC || headerOHLC.atr_std_ratio === undefined) return null;
+    
+    const ratio = headerOHLC.atr_std_ratio;
+    const atr = headerOHLC.atr_14;
+    const bps_change = headerOHLC.bps_change_20;
+    const isBuy = formData.direction === 'BUY';
+    const tickSize = activeSpec?.tickSize || 0.005;
+    const normalizedATR = atr / tickSize;
+    
+    // Check Counter-Trend
+    if (ratio < 1.0 && ((isBuy && bps_change < 0) || (!isBuy && bps_change > 0))) {
+      return {
+        type: 'warning',
+        title: '⚠️ COUNTER-TREND WARNING',
+        text: 'You are placing orders directly against a strong structural trend. Strongly consider Back-Loaded models with wider intervals to protect your average price, and ensure your Stop Loss is technically sound.'
+      };
+    }
+    
+    if (ratio < 1.0) {
+      if (normalizedATR < 5) {
+        return {
+          type: 'trend-quiet',
+          title: '📉 QUIET GRINDING TREND (Ratio < 1.0 | Low ATR)',
+          text: 'The market is trending cleanly with very shallow intraday pullbacks. Front-Loaded models are highly recommended to ensure you get filled. Use tighter intervals.'
+        };
+      } else {
+        return {
+          type: 'trend-volatile',
+          title: '⚡ VOLATILE TREND (Ratio < 1.0 | High ATR)',
+          text: 'Strong structural trend, but with wild intraday swings. Equal or Front-Loaded models are preferred. You can use slightly wider intervals to absorb the noise while catching the trend.'
+        };
+      }
+    } else {
+      if (normalizedATR < 5) {
+        return {
+          type: 'chop-quiet',
+          title: '🐢 DEAD / RANGING MARKET (Ratio > 1.0 | Low ATR)',
+          text: 'Low structural progress and low daily volatility. Equal models are recommended. Back-loaded models are unlikely to get fully filled here. Keep intervals tight.'
+        };
+      } else {
+        return {
+          type: 'chop-volatile',
+          title: '🌊 VIOLENT WHIPSAW (Ratio > 1.0 | High ATR)',
+          text: 'Massive intraday spikes but no structural progress. This is the perfect environment for Back-Loaded models to catch deep spikes for superior average pricing. Use wider intervals.'
+        };
+      }
+    }
+  };
+
+  const regimeMsg = getRegimeMessage();
 
   return (
     <div className="entry-planner-container">
+      {regimeMsg && (
+        <div className={`mc-regime-msg ${regimeMsg.type}`} style={{
+          marginBottom: '16px',
+          padding: '12px 16px',
+          borderRadius: '4px',
+          fontSize: '13px',
+          lineHeight: '1.4',
+          borderLeft: '4px solid',
+          backgroundColor: 'rgba(255, 255, 255, 0.05)',
+          borderColor: regimeMsg.type === 'warning' ? '#ff4d4d' :
+                       regimeMsg.type.includes('trend') ? '#4da6ff' :
+                       '#ffb84d'
+        }}>
+          <div style={{ fontWeight: 'bold', marginBottom: '6px', fontSize: '14px', color: 
+            regimeMsg.type === 'warning' ? '#ff4d4d' :
+            regimeMsg.type.includes('trend') ? '#4da6ff' : '#ffb84d'
+          }}>{regimeMsg.title}</div>
+          <div style={{ color: 'var(--text-secondary)' }}>{regimeMsg.text}</div>
+        </div>
+      )}
       <div className="models-grid">
         <ModelCard 
           model={models.equal} 
           formData={formData} 
           activeSpec={activeSpec} 
+          headerOHLC={headerOHLC}
         />
         <ModelCard 
           model={models.front_loaded} 
           formData={formData} 
           activeSpec={activeSpec} 
+          headerOHLC={headerOHLC}
         />
         <ModelCard 
           model={models.back_loaded} 
           formData={formData} 
           activeSpec={activeSpec} 
+          headerOHLC={headerOHLC}
         />
         <ModelCard 
           model={models.manual} 
           formData={formData} 
           activeSpec={activeSpec} 
+          headerOHLC={headerOHLC}
           isManual={true}
           onUpdateManualLots={onUpdateManualLots}
         />
