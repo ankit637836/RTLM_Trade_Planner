@@ -57,11 +57,14 @@ async def startup_event():
         init_db()
     except Exception as e:
         logger.error(f"Failed to initialize database (may be running without DB on Vercel): {e}")
-        
     try:
         market_service.initialize_cache()
     except Exception as e:
         logger.error(f"Failed to initialize market cache: {e}")
+
+@app.get("/")
+def read_root():
+    return {"status": "success", "message": "RTLM API backend is running normally."}
 
 @app.get("/health")
 def health_check():
