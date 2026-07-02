@@ -14,9 +14,10 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy import desc
 from src.models.database import OHLCData, Instrument, MarketMetric, Product, SessionLocal
 
+from src.config.settings import LOG_LEVEL
 logger = logging.getLogger(__name__)
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=LOG_LEVEL,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 

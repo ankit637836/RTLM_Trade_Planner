@@ -10,7 +10,10 @@ load_dotenv()  # Load .env file
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 QH_API_TOKEN = os.getenv("QH_API_TOKEN", "")
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///rtlm.db")
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+LOG_LEVEL_STR = os.getenv("LOG_LEVEL", "INFO").upper()
+
+import logging
+LOG_LEVEL = getattr(logging, LOG_LEVEL_STR, logging.INFO)
 
 if not ANTHROPIC_API_KEY:
     raise ValueError("ANTHROPIC_API_KEY not set in .env")

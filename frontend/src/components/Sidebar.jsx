@@ -100,32 +100,35 @@ const Sidebar = ({ formData, setFormData, PRODUCTS, allContracts, fetchVolatilit
       const avg_entry = (next.start_price + next.end_price) / 2;
       const risk_distance = Math.abs(avg_entry - next.stop_price);
 
-      if (field === 'target_reward') {
-        // Auto-compute Take Profit price
+      if (['target_reward', 'target_risk', 'start_price', 'end_price', 'stop_price'].includes(field)) {
+        if (field === 'target_risk') {
+          // By default when risk changes, set reward to match (1:1 RR)
+          next.target_reward = next.target_risk;
+        }
+
+        // Auto-compute Take Profit price to maintain the current Target Reward / RR
         const target_RR = next.target_reward / next.target_risk;
-        const reward_distance = risk_distance * target_RR;
+        const reward_distance_input = risk_distance * target_RR;
         let raw_tp = next.direction === 'BUY' 
-          ? avg_entry + reward_distance 
-          : avg_entry - reward_distance;
+          ? avg_entry + reward_distance_input 
+          : avg_entry - reward_distance_input;
         
         // Snap TP to grid interval
         const interval = next.interval || 0.005;
         next.tp_price = Math.round(raw_tp / interval) * interval;
         
-        // Recalculate true reward based on snapped TP
-        const actual_reward_distance = Math.abs(next.tp_price - avg_entry);
-        const actual_RR = risk_distance > 0 ? actual_reward_distance / risk_distance : 0;
+        // Recalculate true reward based on snapped TP (directional)
+        const directional_reward = next.direction === 'BUY' ? (next.tp_price - avg_entry) : (avg_entry - next.tp_price);
+        const actual_RR = risk_distance > 0 ? directional_reward / risk_distance : 0;
         next.target_reward = next.target_risk * actual_RR;
       } 
-      else if (['tp_price', 'target_risk', 'start_price', 'end_price', 'stop_price'].includes(field)) {
-        if (field === 'tp_price') {
-          const interval = next.interval || 0.005;
-          next.tp_price = Math.round(next.tp_price / interval) * interval;
-        }
+      else if (field === 'tp_price') {
+        const interval = next.interval || 0.005;
+        next.tp_price = Math.round(next.tp_price / interval) * interval;
         
-        // Auto-compute Target Reward
-        const reward_distance = Math.abs(next.tp_price - avg_entry);
-        const actual_RR = risk_distance > 0 ? reward_distance / risk_distance : 0;
+        // Auto-compute Target Reward (directional) because user manually changed TP
+        const directional_reward = next.direction === 'BUY' ? (next.tp_price - avg_entry) : (avg_entry - next.tp_price);
+        const actual_RR = risk_distance > 0 ? directional_reward / risk_distance : 0;
         next.target_reward = next.target_risk * actual_RR;
       }
 
