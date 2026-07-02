@@ -1,7 +1,7 @@
 // frontend/src/hooks/useEntryPlan.js
 import { useState, useCallback } from 'react';
 
-const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '/api' : 'http://localhost:8000/api');
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
 
 export function useEntryPlan() {
   const [loading, setLoading] = useState(false);
