@@ -49,7 +49,9 @@ function App() {
 
   useEffect(() => {
     fetchContractsList();
-    fetch(`${import.meta.env.VITE_API_URL}/config/products`)
+    
+    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
+    fetch(`${API_URL}/config/products`)
       .then(res => res.json())
       .then(data => {
         if (data.status === 'success') setProductsMap(data.products);
