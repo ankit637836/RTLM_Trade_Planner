@@ -16,7 +16,7 @@ import logging
 LOG_LEVEL = getattr(logging, LOG_LEVEL_STR, logging.INFO)
 
 if not ANTHROPIC_API_KEY:
-    raise ValueError("ANTHROPIC_API_KEY not set in .env")
+    logging.warning("ANTHROPIC_API_KEY not set in environment.")
 
 if not QH_API_TOKEN:
-    raise ValueError("QH_API_TOKEN not set in .env")
+    logging.warning("QH_API_TOKEN not set in environment.")
