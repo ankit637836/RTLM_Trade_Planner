@@ -34,9 +34,39 @@ const MarketData = ({ PRODUCTS }) => {
   );
 
   useEffect(() => {
-    // When product changes, select the first contract automatically
+    // When product changes, select the December contract automatically
     if (activeContracts.length > 0) {
-      setSelectedContractCode(activeContracts[0].code);
+      const activeSpec = PRODUCTS[activeProduct];
+      if (activeSpec) {
+        const currentYear2Digit = String(new Date().getFullYear()).slice(-2);
+        const targetDecPrefix = `${activeSpec.qhPrefix}Z${currentYear2Digit}`;
+
+        // 1. Try to find the exact December outright contract
+        const exactDecOutright = activeContracts.find(c => c.type === 'outright' && c.code === targetDecPrefix);
+        
+        if (exactDecOutright) {
+          setSelectedContractCode(exactDecOutright.code);
+        } else {
+          // 2. If outright is not available (e.g. Energy), try to find the first calendar spread starting with the December contract
+          const decSpread = activeContracts.find(c => c.type === 'calendar' && c.code.startsWith(targetDecPrefix + '-'));
+          if (decSpread) {
+            setSelectedContractCode(decSpread.code);
+          } else {
+            // 3. Fallback to the first pure outright if any
+            const expectedOutrightLength = activeSpec.qhPrefix.length + 3;
+            const pureOutrights = activeContracts.filter(c => c.type === 'outright' && c.code.length === expectedOutrightLength && c.code.startsWith(activeSpec.qhPrefix));
+            
+            if (pureOutrights.length > 0) {
+               setSelectedContractCode(pureOutrights[0].code);
+            } else {
+               // 4. Ultimate fallback
+               setSelectedContractCode(activeContracts[0].code);
+            }
+          }
+        }
+      } else {
+        setSelectedContractCode(activeContracts[0].code);
+      }
     } else {
       setSelectedContractCode('');
     }
@@ -159,10 +189,15 @@ const MarketData = ({ PRODUCTS }) => {
             <h4 className="md-panel-title">METRICS SUMMARY</h4>
             <table className="md-table">
               <tbody>
-                <tr><td>ATR (10)</td><td>0.035</td></tr>
-                <tr><td>RVOL (20)</td><td>1.12</td></tr>
-                <tr><td>1W CHG</td><td style={{color: 'var(--buy-color)'}}>+0.045 (+0.1%)</td></tr>
-                <tr><td>REGIME</td><td style={{color: 'var(--buy-color)'}}>UPTREND</td></tr>
+                <tr><td>ATR (14)</td><td>{currentOHLC.atr_14 !== undefined ? currentOHLC.atr_14.toFixed(4) : '-'}</td></tr>
+                <tr><td>RVOL (14)</td><td>{currentOHLC.rvol_14 !== undefined ? currentOHLC.rvol_14.toFixed(2) : '-'}</td></tr>
+                <tr>
+                  <td>14D CHG (Bps)</td>
+                  <td style={{color: (currentOHLC.bps_change_14 >= 0) ? 'var(--buy-color)' : 'var(--sell-color)'}}>
+                    {currentOHLC.bps_change_14 !== undefined ? `${currentOHLC.bps_change_14 > 0 ? '+' : ''}${currentOHLC.bps_change_14}` : '-'}
+                  </td>
+                </tr>
+                <tr><td>ATR/STD RATIO</td><td>{currentOHLC.atr_std_ratio !== undefined ? currentOHLC.atr_std_ratio.toFixed(2) : '-'}</td></tr>
               </tbody>
             </table>
           </div>

@@ -25,7 +25,15 @@ export function useEntryPlan() {
         target_risk: parseFloat(params.target_risk),
         tolerance_pct: parseFloat(params.tolerance_pct) || 5.0,
         solver_mode: params.solver_mode || 'EXACT_RISK',
-        manual_lots: params.manual_lots || null
+        equal_lots: params.equalLots || null,
+        front_lots: params.frontLots || null,
+        back_lots: params.backLots || null,
+        raem_lots: params.raemLots || null,
+        raem_start: params.raemBounds ? parseFloat(params.raemBounds.start_price) : null,
+        raem_end: params.raemBounds ? parseFloat(params.raemBounds.end_price) : null,
+        raem_stop: params.raemBounds ? parseFloat(params.raemBounds.stop_price) : null,
+        raem_tp: params.raemBounds ? parseFloat(params.raemBounds.tp_price) : null,
+        raem_base_shape: params.raemBaseShape || 'front_loaded'
       };
 
       const response = await fetch(`${API_URL}/entry/solve`, {
@@ -57,5 +65,26 @@ export function useEntryPlan() {
     }
   }, []);
 
-  return { solveEntryLadder, loading, error };
+  const fetchAutoSuggestion = useCallback(async (contractCode, lookback = 30, interval = '1D') => {
+    try {
+      const response = await fetch(`${API_URL}/auto-suggest/${contractCode}?interval=${interval}&lookback=${lookback}`);
+      
+      if (!response.ok) {
+        let errStr = `HTTP ${response.status}`;
+        try {
+          const errData = await response.json();
+          errStr = errData.detail || errStr;
+        } catch(e) {}
+        throw new Error(errStr);
+      }
+
+      const data = await response.json();
+      return data;
+    } catch (err) {
+      console.error("Auto-Suggest failed:", err);
+      throw err;
+    }
+  }, []);
+
+  return { solveEntryLadder, fetchAutoSuggestion, loading, error };
 }

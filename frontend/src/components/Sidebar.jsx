@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import '../styles/Sidebar.css';
 
-const Sidebar = ({ formData, setFormData, PRODUCTS, allContracts, fetchVolatilityData, frontContractCode }) => {
+const Sidebar = ({ formData, setFormData, PRODUCTS, allContracts, fetchVolatilityData, frontContractCode, fetchAutoSuggestion, headerOHLC, setRaemBounds, setRaemLots, setRaemBaseShape }) => {
   const [openCategory, setOpenCategory] = useState(PRODUCTS[formData.product]?.category || 'STIR');
   const [volSearchText, setVolSearchText] = useState('');
   const [volSelectedContract, setVolSelectedContract] = useState('');
@@ -10,6 +10,12 @@ const Sidebar = ({ formData, setFormData, PRODUCTS, allContracts, fetchVolatilit
   const [volLoading, setVolLoading] = useState(false);
   const [templates, setTemplates] = useState([]);
   const [templateName, setTemplateName] = useState('');
+  
+  // RAEM State
+  const [isAutoSuggesting, setIsAutoSuggesting] = useState(false);
+  const [lookbackDays, setLookbackDays] = useState(10);
+  const [intervalOption, setIntervalOption] = useState('1D');
+  const [raemScore, setRaemScore] = useState(null);
 
   useEffect(() => {
     fetch(`${import.meta.env.VITE_API_URL}/templates?template_type=ENTRY`)
@@ -140,64 +146,62 @@ const Sidebar = ({ formData, setFormData, PRODUCTS, allContracts, fetchVolatilit
     });
   };
 
+  const handleAutoSuggest = async () => {
+    const targetContract = volSelectedContract || frontContractCode;
+    if (!fetchAutoSuggestion || !targetContract) return;
+    setIsAutoSuggesting(true);
+    setRaemScore(null);
+    try {
+      const data = await fetchAutoSuggestion(targetContract, lookbackDays, intervalOption);
+      if (data && data.status === 'success') {
+        const { eme_ticks, start_anchor_z, regime_score, suggested_model, metrics } = data;
+        setRaemScore(regime_score);
+        
+        // Use the user's manual start_price as the anchor! This avoids massive price mismatches
+        // when the user inputs yields/rates (e.g. 0.04) but the OHLC data returns pure prices (e.g. 96.00).
+        const anchorPrice = parseFloat(formData.start_price);
+        const tickSize = PRODUCTS[formData.product]?.tickSize || 0.005;
+        
+        // We use the exact start_price the user wants to test, so we snap it.
+        const snappedStart = Math.round(anchorPrice / tickSize) * tickSize;
+        
+        const activeMultiplier = formData.interval_multiplier || 1;
+        const actualInterval = tickSize * activeMultiplier;
+        
+        if (typeof setRaemBounds === 'function') {
+          setRaemBounds({
+            start_price: parseFloat(formData.start_price),
+            end_price: parseFloat(formData.end_price),
+            stop_price: parseFloat(formData.stop_price),
+            tp_price: parseFloat(formData.tp_price)
+          });
+        }
+        if (typeof setRaemBaseShape === 'function') {
+          setRaemBaseShape(suggested_model);
+        }
+        if (typeof setRaemMetrics === 'function') {
+          setRaemMetrics({
+            regime_score,
+            suggested_model,
+            metrics
+          });
+        }
+        if (typeof setRaemLots === 'function') {
+          setRaemLots(null);
+        }
+      }
+    } catch (e) {
+      console.error(e);
+      alert("Auto-Suggest failed: " + e.message);
+    } finally {
+      setIsAutoSuggesting(false);
+    }
+  };
+
   const activeSpec = PRODUCTS[formData.product];
 
   return (
     <div className="sidebar-content">
-      {/* TEMPLATES */}
-      <div className="section">
-        <h3 className="section-title">TEMPLATES</h3>
-        <div style={{display: 'flex', gap: '5px', marginBottom: '10px'}}>
-          <select 
-            className="num-input" 
-            style={{flex: 1}}
-            onChange={(e) => {
-              const selected = templates.find(t => t.id === parseInt(e.target.value));
-              if(selected) {
-                setTemplateName(selected.name);
-                const { volSelectedContract: savedVol, ...restForm } = selected.payload;
-                setFormData(restForm);
-                if (savedVol) {
-                  setVolSelectedContract(savedVol);
-                  setVolSearchText(savedVol);
-                }
-              }
-            }}
-            value={templates.find(t => t.name === templateName)?.id || ""}
-          >
-            <option value="" disabled>Load Template...</option>
-            {templates.map(t => (
-              <option key={t.id} value={t.id}>{t.name}</option>
-            ))}
-          </select>
-        </div>
-        <div style={{display: 'flex', gap: '5px'}}>
-          <input 
-            type="text" 
-            className="num-input" 
-            placeholder="Template name" 
-            value={templateName}
-            onChange={e => setTemplateName(e.target.value)}
-            style={{flex: 1}}
-          />
-          <button className="ai-btn" onClick={handleSaveTemplate}>SAVE</button>
-          <button className="ai-btn" style={{background: '#8a2b2b', padding: '4px 8px'}} onClick={handleDeleteTemplate}>X</button>
-        </div>
-      </div>
-
-      {/* AI PROMPT */}
-      <div className="section">
-        <h3 className="section-title" style={{color: 'var(--accent-blue)'}}>AI PROMPT</h3>
-        <div className="ai-prompt">
-          <textarea 
-            className="ai-textarea" 
-            placeholder="Type your strategy here..."
-            defaultValue="I want to buy SR3 starting from 0.04 till 0.02 with a stop loss of 0 and target of 0.06."
-          />
-          <button className="ai-btn">APPLY</button>
-        </div>
-      </div>
-
       {/* PRODUCT */}
       <div className="section">
         <h3 className="section-title">PRODUCT</h3>
@@ -317,15 +321,15 @@ const Sidebar = ({ formData, setFormData, PRODUCTS, allContracts, fetchVolatilit
         
         <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
           <div className="spec-box" style={{ flex: '1 1 45%', padding: '6px' }}>
-            <span className="spec-label" style={{ fontSize: '9px' }}>20D ATR</span>
+            <span className="spec-label" style={{ fontSize: '9px' }}>14D ATR</span>
             <span className="spec-val" style={{ fontSize: '11px' }}>
-              {volLoading ? '...' : (volData ? volData.atr_20 : '-')}
+              {volLoading ? '...' : (volData ? volData.atr_14 : '-')}
             </span>
           </div>
           <div className="spec-box" style={{ flex: '1 1 45%', padding: '6px' }}>
-            <span className="spec-label" style={{ fontSize: '9px' }}>20D STD DEV</span>
+            <span className="spec-label" style={{ fontSize: '9px' }}>14D STD DEV</span>
             <span className="spec-val" style={{ fontSize: '11px' }}>
-              {volLoading ? '...' : (volData ? volData.std_20 : '-')}
+              {volLoading ? '...' : (volData ? volData.std_14 : '-')}
             </span>
           </div>
           <div className="spec-box" style={{ flex: '1 1 45%', padding: '6px' }}>
@@ -335,12 +339,66 @@ const Sidebar = ({ formData, setFormData, PRODUCTS, allContracts, fetchVolatilit
             </span>
           </div>
           <div className="spec-box" style={{ flex: '1 1 45%', padding: '6px' }}>
-            <span className="spec-label" style={{ fontSize: '9px' }}>20D Bps Δ</span>
-            <span className="spec-val" style={{ fontSize: '11px', color: (volData?.bps_change_20 >= 0) ? 'var(--buy-color)' : (volData?.bps_change_20 < 0 ? 'var(--sell-color)' : 'inherit') }}>
-              {volLoading ? '...' : (volData ? `${volData.bps_change_20 > 0 ? '+' : ''}${volData.bps_change_20}` : '-')}
+            <span className="spec-label" style={{ fontSize: '9px' }}>14D Bps Δ</span>
+            <span className="spec-val" style={{ fontSize: '11px', color: (volData?.bps_change_14 >= 0) ? 'var(--buy-color)' : (volData?.bps_change_14 < 0 ? 'var(--sell-color)' : 'inherit') }}>
+              {volLoading ? '...' : (volData ? `${volData.bps_change_14 > 0 ? '+' : ''}${volData.bps_change_14}` : '-')}
+            </span>
+          </div>
+          <div className="spec-box" style={{ flex: '1 1 45%', padding: '6px' }}>
+            <span className="spec-label" style={{ fontSize: '9px' }}>Hurst (H)</span>
+            <span className="spec-val" style={{ fontSize: '11px', color: volData?.hurst < 0.5 ? 'var(--sell-color)' : 'var(--buy-color)' }}>
+              {volLoading ? '...' : (volData?.hurst != null ? volData.hurst.toFixed(3) : '-')}
+            </span>
+          </div>
+          <div className="spec-box" style={{ flex: '1 1 45%', padding: '6px' }}>
+            <span className="spec-label" style={{ fontSize: '9px' }}>Z-Score</span>
+            <span className="spec-val" style={{ fontSize: '11px' }}>
+              {volLoading ? '...' : (volData?.z_score != null ? volData.z_score.toFixed(3) : '-')}
+            </span>
+          </div>
+          <div className="spec-box" style={{ flex: '1 1 100%', padding: '6px' }}>
+            <span className="spec-label" style={{ fontSize: '9px' }}>REGIME SCORE (RS)</span>
+            <span className="spec-val" style={{ fontSize: '12px', fontWeight: 'bold' }}>
+              {volLoading ? '...' : (volData?.regime_score != null ? `${volData.regime_score.toFixed(3)} → ${volData.suggested_model}` : '-')}
             </span>
           </div>
         </div>
+      </div>
+
+      {/* RAEM AUTO-SUGGEST */}
+      <div className="section" style={{ backgroundColor: 'rgba(77, 166, 255, 0.05)', border: '1px solid rgba(77, 166, 255, 0.2)', padding: '10px', borderRadius: '4px', marginBottom: '15px' }}>
+        <h3 className="section-title" style={{ color: 'var(--accent-blue)', display: 'flex', justifyContent: 'space-between' }}>
+          <span>🤖 RAEM AUTO-SUGGEST</span>
+          {raemScore !== null && (
+            <span style={{ fontSize: '10px', color: raemScore < 0.4 ? 'var(--buy-color)' : raemScore > 0.6 ? 'var(--sell-color)' : 'var(--text-secondary)' }}>
+              RS: {raemScore}
+            </span>
+          )}
+        </h3>
+        <div className="input-grid" style={{marginBottom: '6px'}}>
+          <div className="input-group">
+            <span className="input-label">Lookback (Days)</span>
+            <input className="num-input" type="number" min="1" max="30" value={lookbackDays} 
+                   onChange={e => setLookbackDays(parseInt(e.target.value) || 10)} />
+          </div>
+          <div className="input-group">
+            <span className="input-label">Interval</span>
+            <select className="num-input" value={intervalOption} onChange={e => setIntervalOption(e.target.value)} style={{ padding: '4px' }}>
+              <option value="1M">1 Min</option>
+              <option value="5M">5 Min</option>
+              <option value="1H">1 Hour</option>
+              <option value="1D">1 Day</option>
+            </select>
+          </div>
+        </div>
+        <button 
+          className="btn-action" 
+          onClick={handleAutoSuggest} 
+          disabled={isAutoSuggesting || !frontContractCode}
+          style={{ width: '100%', marginTop: '5px', backgroundColor: 'var(--accent-blue)', color: '#111' }}
+        >
+          {isAutoSuggesting ? 'COMPUTING MATRIX...' : 'GENERATE DYNAMIC ALLOCATOR'}
+        </button>
       </div>
 
       {/* DIRECTION */}
@@ -387,7 +445,7 @@ const Sidebar = ({ formData, setFormData, PRODUCTS, allContracts, fetchVolatilit
           >SELL</button>
         </div>
       </div>
-
+      
       {/* PRICES */}
       <div className="section">
         <h3 className="section-title">PRICES</h3>
@@ -474,18 +532,57 @@ const Sidebar = ({ formData, setFormData, PRODUCTS, allContracts, fetchVolatilit
         </div>
       </div>
 
-      {/* SOLVER MODE */}
+      {/* TEMPLATES */}
       <div className="section">
-        <h3 className="section-title">SOLVER MODE</h3>
-        <div className="btn-grid-2">
-          <button 
-            className={`toggle-btn ${formData.solver_mode === 'EXACT_RISK' ? 'active-blue' : ''}`}
-            onClick={() => handleChange('solver_mode', 'EXACT_RISK')}
-          >EXACT RISK</button>
-          <button 
-            className={`toggle-btn ${formData.solver_mode === 'BEST_RR' ? 'active-blue' : ''}`}
-            onClick={() => handleChange('solver_mode', 'BEST_RR')}
-          >BEST RR</button>
+        <h3 className="section-title">TEMPLATES</h3>
+        <div style={{display: 'flex', gap: '5px', marginBottom: '10px'}}>
+          <select 
+            className="num-input" 
+            style={{flex: 1}}
+            onChange={(e) => {
+              const selected = templates.find(t => t.id === parseInt(e.target.value));
+              if(selected) {
+                setTemplateName(selected.name);
+                const { volSelectedContract: savedVol, ...restForm } = selected.payload;
+                setFormData(restForm);
+                if (savedVol) {
+                  setVolSelectedContract(savedVol);
+                  setVolSearchText(savedVol);
+                }
+              }
+            }}
+            value={templates.find(t => t.name === templateName)?.id || ""}
+          >
+            <option value="" disabled>Load Template...</option>
+            {templates.map(t => (
+              <option key={t.id} value={t.id}>{t.name}</option>
+            ))}
+          </select>
+        </div>
+        <div style={{display: 'flex', gap: '5px'}}>
+          <input 
+            type="text" 
+            className="num-input" 
+            placeholder="Template name" 
+            value={templateName}
+            onChange={e => setTemplateName(e.target.value)}
+            style={{flex: 1}}
+          />
+          <button className="ai-btn" onClick={handleSaveTemplate}>SAVE</button>
+          <button className="ai-btn" style={{background: '#8a2b2b', padding: '4px 8px'}} onClick={handleDeleteTemplate}>X</button>
+        </div>
+      </div>
+
+      {/* AI PROMPT */}
+      <div className="section">
+        <h3 className="section-title" style={{color: 'var(--accent-blue)'}}>AI PROMPT</h3>
+        <div className="ai-prompt">
+          <textarea 
+            className="ai-textarea" 
+            placeholder="Type your strategy here..."
+            defaultValue="I want to buy SR3 starting from 0.04 till 0.02 with a stop loss of 0 and target of 0.06."
+          />
+          <button className="ai-btn">APPLY</button>
         </div>
       </div>
 

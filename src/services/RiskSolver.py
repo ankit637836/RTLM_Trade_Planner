@@ -127,21 +127,22 @@ class RiskSolver:
 
     def compute_model(self, model_id: str, title: str, subtitle: str, 
                      solver_mode: str = "EXACT_RISK", 
-                     manual_lots: Optional[List[int]] = None) -> Dict:
+                     manual_lots: Optional[List[int]] = None,
+                     base_shape: Optional[str] = None) -> Dict:
         n = len(self.ladder)
         
         if model_id == "manual" and manual_lots is not None and len(manual_lots) == n:
             lots = manual_lots.copy()
+        elif manual_lots is not None and len(manual_lots) == n:
+            lots = manual_lots.copy()
         else:
-            if model_id == "equal":
+            shape_to_use = (base_shape if base_shape else model_id).lower()
+            if shape_to_use == "equal":
                 weights = self._equal_weights(n)
-            elif model_id == "front_loaded":
+            elif shape_to_use == "front_loaded":
                 weights = self._front_weights(n)
-            elif model_id == "back_loaded":
+            elif shape_to_use == "back_loaded":
                 weights = self._back_weights(n)
-            elif model_id == "manual":
-                # Fallback to equal if manual lots not provided
-                weights = self._equal_weights(n)
             else:
                 weights = self._equal_weights(n)
                 

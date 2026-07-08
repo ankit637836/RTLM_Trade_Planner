@@ -3,7 +3,7 @@ import React from 'react';
 import '../styles/EntryPlanner.css';
 import ModelCard from './ModelCard';
 
-const EntryPlanner = ({ formData, models, loading, error, onUpdateManualLots, activeSpec, headerOHLC }) => {
+const EntryPlanner = ({ formData, models, loading, error, onUpdateEqualLots, onUpdateFrontLots, onUpdateBackLots, onUpdateRaemLots, activeSpec, headerOHLC, raemMetrics }) => {
   if (loading && !models) {
     return <div className="status-container">Calculating models...</div>;
   }
@@ -95,27 +95,68 @@ const EntryPlanner = ({ formData, models, loading, error, onUpdateManualLots, ac
           formData={formData} 
           activeSpec={activeSpec} 
           headerOHLC={headerOHLC}
+          isManual={true}
+          onUpdateManualLots={onUpdateEqualLots}
         />
         <ModelCard 
           model={models.front_loaded} 
           formData={formData} 
           activeSpec={activeSpec} 
           headerOHLC={headerOHLC}
+          isManual={true}
+          onUpdateManualLots={onUpdateFrontLots}
         />
         <ModelCard 
           model={models.back_loaded} 
           formData={formData} 
           activeSpec={activeSpec} 
           headerOHLC={headerOHLC}
-        />
-        <ModelCard 
-          model={models.manual} 
-          formData={formData} 
-          activeSpec={activeSpec} 
-          headerOHLC={headerOHLC}
           isManual={true}
-          onUpdateManualLots={onUpdateManualLots}
+          onUpdateManualLots={onUpdateBackLots}
         />
+        <div>
+          <ModelCard 
+            model={models.raem} 
+            formData={formData} 
+            activeSpec={activeSpec} 
+            headerOHLC={headerOHLC}
+            isManual={true}
+            onUpdateManualLots={onUpdateRaemLots}
+          />
+          {raemMetrics && (
+            <div style={{
+              marginTop: '15px', 
+              padding: '12px', 
+              background: 'rgba(255,255,255,0.03)', 
+              borderRadius: '8px',
+              border: '1px solid rgba(255,255,255,0.08)'
+            }}>
+              <h4 style={{ margin: '0 0 10px 0', fontSize: '11px', color: 'var(--text-secondary)' }}>RAEM MATHEMATICS</h4>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: 'var(--text-dim)' }}>Hurst (H)</span>
+                  <span>{raemMetrics.metrics?.hurst ? raemMetrics.metrics.hurst.toFixed(2) : '-'}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: 'var(--text-dim)' }}>ATR/STD</span>
+                  <span>{raemMetrics.metrics?.atr_std_ratio ? raemMetrics.metrics.atr_std_ratio.toFixed(2) : '-'}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: 'var(--text-dim)' }}>Z-Score</span>
+                  <span>{raemMetrics.metrics?.z_score ? raemMetrics.metrics.z_score.toFixed(2) : '-'}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: 'var(--text-dim)' }}>Regime (RS)</span>
+                  <span style={{ color: 'var(--buy-color)' }}>{raemMetrics.regime_score ? raemMetrics.regime_score.toFixed(3) : '-'}</span>
+                </div>
+                <div style={{ gridColumn: 'span 2', display: 'flex', justifyContent: 'space-between', marginTop: '4px', paddingTop: '4px', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                  <span style={{ color: 'var(--text-dim)' }}>Suggests</span>
+                  <span style={{ fontWeight: 'bold' }}>{raemMetrics.suggested_model ? raemMetrics.suggested_model.replace('_', ' ').toUpperCase() : '-'}</span>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

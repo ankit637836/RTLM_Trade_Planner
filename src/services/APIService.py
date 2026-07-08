@@ -15,6 +15,7 @@ from .LadderGenerator import LadderGenerator
 from .RiskSolver import RiskSolver
 from .ExitPlanner import ExitPlanner
 from .MarketDataService import MarketDataService
+from .RegimeAnalyzer import RegimeAnalyzer
 from src.models.database import SessionLocal, UserTemplate, SimSession, init_db
 from sqlalchemy.orm import Session
 
@@ -84,7 +85,15 @@ class EntrySolveRequest(BaseModel):
     target_risk: float
     tolerance_pct: float
     solver_mode: str = "EXACT_RISK"
-    manual_lots: Optional[List[int]] = None
+    equal_lots: Optional[List[int]] = None
+    front_lots: Optional[List[int]] = None
+    back_lots: Optional[List[int]] = None
+    raem_lots: Optional[List[int]] = None
+    raem_start: Optional[float] = None
+    raem_end: Optional[float] = None
+    raem_stop: Optional[float] = None
+    raem_tp: Optional[float] = None
+    raem_base_shape: Optional[str] = None
 
 class EntryModelData(BaseModel):
     model_id: str
@@ -214,21 +223,45 @@ def solve_entry(req: EntrySolveRequest):
         
         models["equal"] = solver.compute_model(
             model_id="equal", title="EQUAL", subtitle="Flat across ladder", 
-            solver_mode=req.solver_mode
+            solver_mode=req.solver_mode, manual_lots=req.equal_lots
         )
         models["front_loaded"] = solver.compute_model(
             model_id="front_loaded", title="FRONT-LOADED", subtitle="Heavier near first entry", 
-            solver_mode=req.solver_mode
+            solver_mode=req.solver_mode, manual_lots=req.front_lots
         )
         models["back_loaded"] = solver.compute_model(
             model_id="back_loaded", title="BACK-LOADED", subtitle="Heavier deeper in ladder", 
-            solver_mode=req.solver_mode
-        )
-        models["manual"] = solver.compute_model(
-            model_id="manual", title="MANUAL", subtitle="User-defined distribution", 
-            solver_mode=req.solver_mode, manual_lots=req.manual_lots
+            solver_mode=req.solver_mode, manual_lots=req.back_lots
         )
         
+        # 4. Compute Dynamic Allocator (RAEM) if bounds are provided
+        if req.raem_start is not None and req.raem_end is not None:
+            raem_ladder = LadderGenerator.generate(
+                start_price=req.raem_start,
+                stop_price=req.raem_end,
+                interval=req.interval,
+                direction=req.direction
+            )
+            raem_solver = RiskSolver(
+                direction=req.direction,
+                tick_size=contract_spec['tickSize'],
+                usd_tick_value=contract_spec['usdTickValue'],
+                ladder=raem_ladder,
+                stop_price=req.raem_stop if req.raem_stop is not None else req.stop_price,
+                tp_price=req.raem_tp if req.raem_tp is not None else req.tp_price,
+                target_risk=req.target_risk
+            )
+            # Use dynamic shape from frontend
+            models["raem"] = raem_solver.compute_model(
+                model_id="raem", title="DYNAMIC ALLOCATOR", subtitle="RAEM Auto-Suggested Structure", 
+                solver_mode=req.solver_mode, manual_lots=req.raem_lots, base_shape=req.raem_base_shape or "front_loaded"
+            )
+        else:
+            models["raem"] = solver.compute_model(
+                model_id="raem", title="DYNAMIC ALLOCATOR", subtitle="Pending Auto-Suggest (Using Base Bounds)", 
+                solver_mode=req.solver_mode, manual_lots=req.raem_lots, base_shape=req.raem_base_shape or "front_loaded"
+            )
+            
         return {"status": "success", "models": models}
         
     except ValueError as e:
@@ -277,4 +310,25 @@ def get_ohlc(contract_code: str):
     if not data:
         raise HTTPException(status_code=404, detail="OHLC not found")
     return {"status": "success", "data": data}
+
+@app.get("/api/auto-suggest/{contract_code}")
+def auto_suggest(contract_code: str, interval: str = "1D", lookback: int = 30):
+    try:
+        # Fetch lookback + 1 days to provide a previous close for the first day's True Range calculation
+        series = market_service.fetch_historical_series(contract_code, interval=interval, limit=lookback + 1)
+        if not series:
+            raise HTTPException(status_code=404, detail="Could not fetch historical series")
+        
+        # Calculate tick size (default 0.005 for STIRs, might need mapping from products.json)
+        # Using 0.005 as a general default if we don't have it mapped explicitly
+        tick_size = 0.005 
+        
+        suggestion = RegimeAnalyzer.generate_suggestion(series, tick_size=tick_size)
+        if suggestion.get("status") == "error":
+            raise HTTPException(status_code=400, detail=suggestion.get("message"))
+            
+        return suggestion
+    except Exception as e:
+        logger.error(f"Auto-suggest failed for {contract_code}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 # Trigger reload

@@ -32,9 +32,15 @@ function App() {
   });
 
   const [entryModels, setEntryModels] = useState(null);
-  const [manualLots, setManualLots] = useState(null);
+  const [equalLots, setEqualLots] = useState(null);
+  const [frontLots, setFrontLots] = useState(null);
+  const [backLots, setBackLots] = useState(null);
+  const [raemLots, setRaemLots] = useState(null);
+  const [raemBounds, setRaemBounds] = useState(null);
+  const [raemBaseShape, setRaemBaseShape] = useState(null);
+  const [raemMetrics, setRaemMetrics] = useState(null);
 
-  const { solveEntryLadder, loading: entryLoading, error: entryError } = useEntryPlan();
+  const { solveEntryLadder, fetchAutoSuggestion, loading: entryLoading, error: entryError } = useEntryPlan();
 
   // --- TOP BAR MARKET DATA LOGIC ---
   const { 
@@ -123,7 +129,10 @@ function App() {
     const timer = setTimeout(() => {
       const compute = async () => {
         try {
-          const models = await solveEntryLadder({ ...formData, manual_lots: manualLots });
+          const models = await solveEntryLadder({ 
+            ...formData, 
+            equalLots, frontLots, backLots, raemLots, raemBounds, raemBaseShape 
+          });
           setEntryModels(models);
         } catch(e) {
           console.error("Entry calculation failed:", e);
@@ -133,7 +142,7 @@ function App() {
     }, 400);
     
     return () => clearTimeout(timer);
-  }, [formData, manualLots, solveEntryLadder]);
+  }, [formData, equalLots, frontLots, backLots, raemLots, raemBounds, raemBaseShape, solveEntryLadder]);
 
   if (!productsMap) {
     return <div className="app-container" style={{display: 'flex', justifyContent: 'center', alignItems: 'center', color: '#fff', fontSize: '20px', letterSpacing: '2px'}}>LOADING CONFIGURATION...</div>;
@@ -225,6 +234,12 @@ function App() {
             allContracts={allContracts}
             fetchVolatilityData={fetchVolatilityData}
             frontContractCode={frontContractCode}
+            fetchAutoSuggestion={fetchAutoSuggestion}
+            headerOHLC={headerOHLC}
+            setRaemBounds={setRaemBounds}
+            setRaemLots={setRaemLots}
+            setRaemBaseShape={setRaemBaseShape}
+            setRaemMetrics={setRaemMetrics}
           />
         </div>
 
@@ -243,7 +258,11 @@ function App() {
                 models={entryModels} 
                 loading={entryLoading} 
                 error={entryError} 
-                onUpdateManualLots={setManualLots} 
+                onUpdateEqualLots={setEqualLots} 
+                onUpdateFrontLots={setFrontLots} 
+                onUpdateBackLots={setBackLots} 
+                onUpdateRaemLots={setRaemLots} 
+                raemMetrics={raemMetrics}
                 activeSpec={activeSpec}
                 headerOHLC={headerOHLC}
               />

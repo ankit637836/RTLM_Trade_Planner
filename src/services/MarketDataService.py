@@ -233,202 +233,71 @@ class MarketDataService:
         logger.info(f"✓ Built metadata for {len(metadata)} contracts")
         return metadata
 
-    def fetch_contract_ohlc(self, contract_code: str) -> Optional[Dict]:
+    def _sync_and_get_db_ohlc(self, contract_code: str, limit: int = 50):
         """
-        Fetch OHLC data for a single contract
-        Returns: {contract, open, high, low, close, timestamp, volume}
+        Helper to fetch and store OHLC in DB to avoid multiple API calls.
+        Returns list of OHLCData objects (latest first).
         """
-        if not self.qh_token:
-            logger.warning(f"⚠ QH_API_TOKEN not set - Generating mock OHLC for {contract_code}")
-            return {
-                "contract": contract_code,
-                "open": 99.50,
-                "high": 99.65,
-                "low": 99.35,
-                "close": 99.45,
-                "atr_14": 0.035,
-                "rvol_14": 1.12,
-                "timestamp": int(datetime.now().timestamp() * 1000),
-                "volume": 12500,
-                "atr_std_ratio": 1.5,
-                "bps_change_20": 12.5,
-                "fetch_time": datetime.now().isoformat()
-            }
+        db_session = self.db_session or SessionLocal()
+        if not db_session:
+            return []
+            
+        needs_fetch = True
+        instrument_id = None
+        db_data = []
 
-        try:
-            params = {
-                "instruments": contract_code,
-                "interval": "1D"
-            }
-
-            logger.debug(f"Fetching OHLC for {contract_code} from {self.QH_OHLC_ENDPOINT}")
-            response = requests.get(
-                self.QH_OHLC_ENDPOINT,
-                params=params,
-                headers=self.headers,
-                timeout=10
+        instrument = db_session.query(Instrument).filter_by(instrument_code=contract_code).first()
+        if not instrument:
+            # Auto-create Instrument and Product
+            meta = self.contracts_metadata.get(contract_code) or {}
+            prod_code = meta.get('product')
+            if not prod_code:
+                for prefix, prod in self.PREFIX_TO_PRODUCT.items():
+                    if contract_code.startswith(prefix):
+                        prod_code = prod
+                        break
+                if not prod_code:
+                    prod_code = contract_code[:3]
+                    
+            product = db_session.query(Product).filter_by(code=prod_code).first()
+            if not product:
+                qh_prefix = self.TARGET_PRODUCTS.get(prod_code, prod_code)
+                product = Product(code=prod_code, name=prod_code, qh_prefix=qh_prefix)
+                db_session.add(product)
+                db_session.commit()
+                db_session.refresh(product)
+                
+            instrument = Instrument(
+                instrument_code=contract_code,
+                product_id=product.id,
+                instrument_type=meta.get('type', 'outright')
             )
+            db_session.add(instrument)
+            db_session.commit()
+            db_session.refresh(instrument)
+        
+        if instrument:
+            instrument_id = instrument.id
+            db_data = db_session.query(OHLCData).filter_by(
+                instrument_id=instrument_id, interval='1D'
+            ).order_by(desc(OHLCData.qh_timestamp)).limit(limit).all()
+            
+            if len(db_data) >= min(14, limit):
+                latest_time = db_data[0].qh_timestamp
+                # If latest data is from today (or last 24h), we have enough
+                if datetime.now().timestamp() * 1000 - latest_time < 86400000:
+                    needs_fetch = False
+                    logger.debug(f"✓ Using {len(db_data)} cached DB rows for {contract_code}")
 
-            if response.status_code != 200:
-                logger.warning(f"⚠ Failed to fetch {contract_code}: HTTP {response.status_code}")
-                return None
-
-            data = response.json()
-
-            # The v2 endpoint returns a list of bar objects directly
-            if not isinstance(data, list) or len(data) == 0:
-                logger.warning(f"⚠ No bars returned for {contract_code}")
-                return None
-
-            # Get the most recent bar (first in list as per sorted v2 response)
-            latest_bar = data[0]
-            curr_vol = int(latest_bar.get('volume', 0) or 0)
-
-            # Calculate ATR14 and RVOL14
-            atr_14 = 0.0
-            rvol_14 = 0.0
-            if len(data) > 1:
-                trs = []
-                max_days = min(14, len(data) - 1)
-                for i in range(max_days):
-                    curr = data[i]
-                    prev = data[i + 1]
-                    high = float(curr.get('high', 0))
-                    low = float(curr.get('low', 0))
-                    prev_close = float(prev.get('close', 0))
-                    
-                    tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
-                    trs.append(tr)
-                if trs:
-                    atr_14 = sum(trs) / len(trs)
-                
-                volumes = [int(data[i].get('volume', 0) or 0) for i in range(1, max_days + 1)]
-                avg_vol_14 = sum(volumes) / len(volumes) if volumes else 0.0
-                if avg_vol_14 > 0:
-                    rvol_14 = curr_vol / avg_vol_14
-            # Calculate 20-day metrics for Trend vs Noise
-            std_20 = 0.0
-            atr_std_ratio = 0.0
-            bps_change_20 = 0.0
-            if len(data) > 1:
-                max_20 = min(20, len(data) - 1)
-                closes = [float(data[i].get('close', 0)) for i in range(max_20)]
-                
-                if len(closes) > 1:
-                    mean_close = sum(closes) / len(closes)
-                    variance = sum((c - mean_close) ** 2 for c in closes) / (len(closes) - 1)
-                    import math
-                    std_20 = math.sqrt(variance)
-
-                if std_20 > 0:
-                    atr_std_ratio = atr_14 / std_20
-                    
-                latest_close = float(data[0].get('close', 0))
-                historical_close = float(data[max_20].get('close', 0))
-                bps_change_20 = latest_close - historical_close
-
-            ohlc = {
-                "contract": contract_code,
-                "open": float(latest_bar.get('open', 0)),
-                "high": float(latest_bar.get('high', 0)),
-                "low": float(latest_bar.get('low', 0)),
-                "close": float(latest_bar.get('close', 0)),
-                "atr_14": round(atr_14, 4),
-                "rvol_14": round(rvol_14, 2),
-                "atr_std_ratio": round(atr_std_ratio, 2),
-                "bps_change_20": round(bps_change_20, 2),
-                "timestamp": int(latest_bar.get('time', 0)),
-                "volume": curr_vol,
-                "fetch_time": datetime.now().isoformat()
-            }
-
-            # Cache it
-            self.ohlc_cache[contract_code] = ohlc
-
-            return ohlc
-
-        except Exception as e:
-            logger.error(f"❌ Error fetching OHLC for {contract_code}: {str(e)}")
-            return None
-
-    def fetch_contract_volatility(self, contract_code: str) -> Optional[Dict]:
-        """
-        Fetch OHLC data and compute 20-day Volatility Analytics
-        Returns: {contract, atr_20, std_20, atr_std_ratio, bps_change_20}
-        """
-        if not self.qh_token:
-            logger.warning(f"⚠️ QH_API_TOKEN not set - Generating mock Volatility for {contract_code}")
-            return {
-                "contract": contract_code,
-                "atr_20": 0.045,
-                "std_20": 0.030,
-                "atr_std_ratio": 1.5,
-                "bps_change_20": 12.5,
-                "fetch_time": datetime.now().isoformat()
-            }
-
-        try:
-            needs_fetch = True
-            instrument_id = None
-            db_data = []
-
-            db_session = self.db_session or SessionLocal()
-
-            # 1. Check DB first
-            if db_session:
-                instrument = db_session.query(Instrument).filter_by(instrument_code=contract_code).first()
-                if not instrument:
-                    # Auto-create Instrument and Product
-                    meta = self.contracts_metadata.get(contract_code) or {}
-                    prod_code = meta.get('product')
-                    if not prod_code:
-                        for prefix, prod in self.PREFIX_TO_PRODUCT.items():
-                            if contract_code.startswith(prefix):
-                                prod_code = prod
-                                break
-                        if not prod_code:
-                            prod_code = contract_code[:3]
-                            
-                    product = db_session.query(Product).filter_by(code=prod_code).first()
-                    if not product:
-                        qh_prefix = self.TARGET_PRODUCTS.get(prod_code, prod_code)
-                        product = Product(code=prod_code, name=prod_code, qh_prefix=qh_prefix)
-                        db_session.add(product)
-                        db_session.commit()
-                        db_session.refresh(product)
-                        
-                    instrument = Instrument(
-                        instrument_code=contract_code,
-                        product_id=product.id,
-                        instrument_type=meta.get('type', 'outright')
-                    )
-                    db_session.add(instrument)
-                    db_session.commit()
-                    db_session.refresh(instrument)
-                
-                if instrument:
-                    instrument_id = instrument.id
-                    db_data = db_session.query(OHLCData).filter_by(
-                        instrument_id=instrument_id, interval='1D'
-                    ).order_by(desc(OHLCData.qh_timestamp)).limit(21).all()
-                    
-                    if len(db_data) >= 20:
-                        latest_time = db_data[0].qh_timestamp
-                        # If latest data is from today (or last 24h), we have enough
-                        if datetime.now().timestamp() * 1000 - latest_time < 86400000:
-                            needs_fetch = False
-                            logger.debug(f"✓ Using {len(db_data)} cached DB rows for {contract_code} Volatility")
-
-            # 2. Fetch missing data if needed
-            if needs_fetch:
-                logger.info(f"Downloading updated OHLC for {contract_code} from QuantHub...")
-                params = {"instruments": contract_code, "interval": "1D"}
+        if needs_fetch and self.qh_token:
+            logger.info(f"Downloading updated OHLC for {contract_code} from QuantHub...")
+            params = {"instruments": contract_code, "interval": "1D"}
+            try:
                 response = requests.get(self.QH_OHLC_ENDPOINT, params=params, headers=self.headers, timeout=10)
-                
                 if response.status_code == 200:
                     data = response.json()
-                    if isinstance(data, list) and instrument_id and db_session:
-                        # Upsert to DB
+                    if isinstance(data, list) and instrument_id:
+                        from sqlalchemy.dialects.postgresql import insert
                         for bar in data:
                             timestamp = int(bar.get('time', 0))
                             stmt = insert(OHLCData).values(
@@ -446,65 +315,186 @@ class MarketDataService:
                             db_session.execute(stmt)
                         db_session.commit()
                         
-                        # Re-query DB after insert
                         db_data = db_session.query(OHLCData).filter_by(
                             instrument_id=instrument_id, interval='1D'
-                        ).order_by(desc(OHLCData.qh_timestamp)).limit(21).all()
-
-            if not db_data or len(db_data) < 2:
-                logger.warning(f"⚠️ Not enough bars returned/cached for {contract_code}")
-                return None
-
-            # 3. Calculate 20-day ATR and STD DEV from DB objects
-            import math
-            trs = []
-            closes = []
-            max_days = min(20, len(db_data) - 1)
-            
-            for i in range(max_days):
-                curr = db_data[i]
-                prev = db_data[i + 1]
+                        ).order_by(desc(OHLCData.qh_timestamp)).limit(limit).all()
+            except Exception as e:
+                logger.error(f"❌ Error fetching updated OHLC: {str(e)}")
                 
-                high = float(curr.high_price or 0)
-                low = float(curr.low_price or 0)
-                prev_close = float(prev.close_price or 0)
-                
-                tr = max(
-                    high - low,
-                    abs(high - prev_close),
-                    abs(low - prev_close)
-                )
-                trs.append(tr)
-                closes.append(float(curr.close_price or 0))
-                
-            atr_20 = sum(trs) / len(trs) if trs else 0.0
-            
-            std_20 = 0.0
-            if closes and len(closes) > 1:
-                mean_close = sum(closes) / len(closes)
-                variance = sum((c - mean_close) ** 2 for c in closes) / (len(closes) - 1)
-                std_20 = math.sqrt(variance)
+        return db_data
 
-            atr_std_ratio = atr_20 / std_20 if std_20 > 0 else 0.0
-
-            # 4. Calculate 20-day BPS Change
-            latest_close = float(db_data[0].close_price or 0)
-            historical_close = float(db_data[max_days].close_price or 0)
-            
-            bps_change_20 = latest_close - historical_close
-
+    def fetch_contract_ohlc(self, contract_code: str) -> Optional[Dict]:
+        """
+        Fetch OHLC data for a single contract
+        Returns: {contract, open, high, low, close, timestamp, volume, atr_14, rvol_14, bps_change_14}
+        """
+        if not self.qh_token:
+            logger.warning(f"⚠️ QH_API_TOKEN not set - Generating mock OHLC for {contract_code}")
             return {
                 "contract": contract_code,
-                "atr_20": round(atr_20, 4),
-                "std_20": round(std_20, 4),
-                "atr_std_ratio": round(atr_std_ratio, 2),
-                "bps_change_20": round(bps_change_20, 2),
+                "open": 99.50,
+                "high": 99.65,
+                "low": 99.35,
+                "close": 99.45,
+                "atr_14": 0.035,
+                "rvol_14": 1.12,
+                "timestamp": int(datetime.now().timestamp() * 1000),
+                "volume": 12500,
+                "atr_std_ratio": 1.5,
+                "bps_change_14": 12.5,
                 "fetch_time": datetime.now().isoformat()
             }
 
+        try:
+            db_data = self._sync_and_get_db_ohlc(contract_code, limit=20)
+            if not db_data:
+                return None
+                
+            latest_bar = db_data[0]
+            curr_vol = int(latest_bar.volume or 0)
+
+            # Calculate 14-day metrics
+            atr_14 = 0.0
+            rvol_14 = 0.0
+            std_14 = 0.0
+            atr_std_ratio = 0.0
+            bps_change_14 = 0.0
+            
+            if len(db_data) > 1:
+                trs = []
+                closes = []
+                max_days = min(14, len(db_data) - 1)
+                
+                for i in range(max_days):
+                    curr = db_data[i]
+                    prev = db_data[i + 1]
+                    high = float(curr.high_price or 0)
+                    low = float(curr.low_price or 0)
+                    prev_close = float(prev.close_price or 0)
+                    
+                    tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
+                    trs.append(tr)
+                    closes.append(float(curr.close_price or 0))
+                    
+                if trs:
+                    atr_14 = sum(trs) / len(trs)
+                    
+                volumes = [int(db_data[i].volume or 0) for i in range(1, max_days + 1)]
+                avg_vol_14 = sum(volumes) / len(volumes) if volumes else 0.0
+                if avg_vol_14 > 0:
+                    rvol_14 = curr_vol / avg_vol_14
+                    
+                if len(closes) > 1:
+                    mean_close = sum(closes) / len(closes)
+                    variance = sum((c - mean_close) ** 2 for c in closes) / (len(closes) - 1)
+                    import math
+                    std_14 = math.sqrt(variance)
+                    
+                if std_14 > 0:
+                    atr_std_ratio = atr_14 / std_14
+                    
+                latest_close = float(db_data[0].close_price or 0)
+                historical_close = float(db_data[max_days].close_price or 0)
+                bps_change_14 = latest_close - historical_close
+
+            ohlc = {
+                "contract": contract_code,
+                "open": float(latest_bar.open_price or 0),
+                "high": float(latest_bar.high_price or 0),
+                "low": float(latest_bar.low_price or 0),
+                "close": float(latest_bar.close_price or 0),
+                "atr_14": round(atr_14, 4),
+                "rvol_14": round(rvol_14, 2),
+                "atr_std_ratio": round(atr_std_ratio, 2),
+                "bps_change_14": round(bps_change_14, 2),
+                "timestamp": int(latest_bar.qh_timestamp or 0),
+                "volume": curr_vol,
+                "fetch_time": datetime.now().isoformat()
+            }
+            self.ohlc_cache[contract_code] = ohlc
+            return ohlc
         except Exception as e:
-            logger.error(f"❌ Error fetching Volatility for {contract_code}: {str(e)}")
+            logger.error(f"❌ Error fetching OHLC for {contract_code}: {str(e)}")
             return None
+
+    def fetch_contract_volatility(self, contract_code: str) -> Optional[Dict]:
+        """
+        Fetch OHLC data and compute 14-day Volatility Analytics
+        """
+        from .RegimeAnalyzer import RegimeAnalyzer
+        series = self.fetch_historical_series(contract_code, interval="1D", limit=15)
+        if not series or len(series) < 2:
+            return None
+            
+        suggestion = RegimeAnalyzer.generate_suggestion(series)
+        
+        bps_change = series[-1]["close"] - series[0]["close"]
+
+        if suggestion.get("status") == "success":
+            return {
+                "contract": contract_code,
+                "atr_14": round(suggestion["metrics"]["atr"], 4),
+                "std_14": round(suggestion["metrics"]["std"], 4),
+                "atr_std_ratio": round(suggestion["metrics"]["atr_std_ratio"], 2),
+                "bps_change_14": round(bps_change, 2),
+                "hurst": suggestion["metrics"]["hurst"],
+                "z_score": suggestion["metrics"]["z_score"],
+                "regime_score": suggestion["regime_score"],
+                "suggested_model": suggestion["suggested_model"],
+                "fetch_time": datetime.now().isoformat()
+            }
+            
+        return None
+
+    def fetch_historical_series(self, contract_code: str, interval: str = "1D", limit: int = 30) -> List[Dict]:
+        """
+        Fetch historical OHLC series for a contract to feed into RAEM Math Engine.
+        Uses database cache!
+        """
+        if not self.qh_token:
+            logger.warning(f"⚠️ QH_API_TOKEN not set - Generating mock historical series for {contract_code}")
+            import random
+            from datetime import timedelta
+            mock_data = []
+            base_price = 100.0
+            for i in range(limit):
+                mock_data.append({
+                    "open": base_price,
+                    "high": base_price + random.uniform(0.1, 0.5),
+                    "low": base_price - random.uniform(0.1, 0.5),
+                    "close": base_price + random.uniform(-0.2, 0.2),
+                    "volume": int(random.uniform(1000, 50000)),
+                    "timestamp": int((datetime.now() - timedelta(days=limit-i)).timestamp() * 1000)
+                })
+                base_price = mock_data[-1]["close"]
+            return mock_data
+
+        try:
+            db_data = self._sync_and_get_db_ohlc(contract_code, limit=limit)
+            if not db_data:
+                return []
+                
+            # Convert DB objects to plain dicts that RegimeAnalyzer expects
+            result = []
+            for bar in db_data:
+                result.append({
+                    "open": float(bar.open_price or 0),
+                    "high": float(bar.high_price or 0),
+                    "low": float(bar.low_price or 0),
+                    "close": float(bar.close_price or 0),
+                    "volume": int(bar.volume or 0),
+                    "time": int(bar.qh_timestamp or 0)
+                })
+                
+            # Reversing to be chronological (oldest first)
+            # Make sure we slice exactly to `limit` in case DB returned slightly more
+            result = list(reversed(result))
+            if len(result) > limit:
+                result = result[-limit:]
+            return result
+        except Exception as e:
+            logger.error(f"❌ Error fetching historical series: {str(e)}")
+            return []
 
     def initialize_cache(self) -> Dict[str, int]:
         """
@@ -615,3 +605,4 @@ class MarketDataService:
             "by_product": by_product,
             "last_updated": datetime.now().isoformat()
         }
+

@@ -194,6 +194,9 @@ const Simulator = ({ formData, entryModels, activeSpec }) => {
       if (lowerHalfCount === 0) {
         upperInventory = inventory;
         lowerInventory = 0;
+      } else if (upperHalfCount === 0) {
+        lowerInventory = inventory;
+        upperInventory = 0;
       }
 
       // In rescue mode, the zones flip! Lower becomes pure exits, Upper becomes range trader.
