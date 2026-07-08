@@ -10,8 +10,10 @@ RUN npm install
 # Copy source code
 COPY . .
 
-# Set API URL to relative path for Kubernetes routing (Ingress)
-ENV VITE_API_URL=/api
+# Allow DevOps to pass the API URL dynamically during the CI/CD pipeline build step.
+# It defaults to '/api' for Ingress routing if nothing is provided.
+ARG VITE_API_URL=/api
+ENV VITE_API_URL=$VITE_API_URL
 
 # Build static files
 RUN npm run build
