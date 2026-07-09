@@ -13,7 +13,6 @@ load_dotenv()
 import json
 from .LadderGenerator import LadderGenerator
 from .RiskSolver import RiskSolver
-from .ExitPlanner import ExitPlanner
 from .MarketDataService import MarketDataService
 from .RegimeAnalyzer import RegimeAnalyzer
 from src.models.database import SessionLocal, UserTemplate, SimSession, init_db
@@ -84,7 +83,6 @@ class EntrySolveRequest(BaseModel):
     volatility: str
     target_risk: float
     tolerance_pct: float
-    solver_mode: str = "EXACT_RISK"
     equal_lots: Optional[List[int]] = None
     front_lots: Optional[List[int]] = None
     back_lots: Optional[List[int]] = None
@@ -93,7 +91,11 @@ class EntrySolveRequest(BaseModel):
     raem_end: Optional[float] = None
     raem_stop: Optional[float] = None
     raem_tp: Optional[float] = None
+    raem_interval: Optional[float] = None
     raem_base_shape: Optional[str] = None
+    contract_code: Optional[str] = None
+    tick_size: Optional[float] = None
+    raem_tick_size: Optional[float] = None
 
 class EntryModelData(BaseModel):
     model_id: str
@@ -106,18 +108,6 @@ class EntryModelData(BaseModel):
     total_reward: float
     avg_entry: float
 
-class ExitSolveRequest(BaseModel):
-    direction: str
-    product: str
-    stop_price: float
-    tp_price: float
-    exit_mode: str = "direct"
-    rt_spacing_ticks: int = 10
-    rt_lots_per_band: int = 1
-    crossing_override: Optional[int] = None
-    rt_start_price: Optional[float] = None
-    entry_models: List[Dict]
-
 class TemplateCreate(BaseModel):
     name: str
     template_type: str
@@ -128,13 +118,6 @@ class SessionCreate(BaseModel):
     state_payload: Dict
 
 # --- ENDPOINTS ---
-
-@app.get("/api/market/volatility/{contract_code}")
-def get_volatility(contract_code: str):
-    data = market_service.fetch_contract_volatility(contract_code)
-    if not data:
-        raise HTTPException(status_code=404, detail="Volatility data not found or insufficient bars")
-    return {"status": "success", "data": data}
 
 @app.post("/api/templates")
 def create_template(template: TemplateCreate, db: Session = Depends(get_db)):
@@ -198,6 +181,16 @@ def solve_entry(req: EntrySolveRequest):
         
     contract_spec = PRODUCTS[req.product]
     
+    tick_size = contract_spec['tickSize']
+    if req.tick_size is not None:
+        tick_size = req.tick_size
+    elif req.contract_code:
+        tick_size = _tick_size_for_contract(req.contract_code)
+        
+    raem_tick_size = tick_size
+    if req.raem_tick_size is not None:
+        raem_tick_size = req.raem_tick_size
+        
     try:
         # 1. Generate ladder
         ladder = LadderGenerator.generate(
@@ -210,7 +203,7 @@ def solve_entry(req: EntrySolveRequest):
         # 2. Create solver
         solver = RiskSolver(
             direction=req.direction,
-            tick_size=contract_spec['tickSize'],
+            tick_size=tick_size,
             usd_tick_value=contract_spec['usdTickValue'],
             ladder=ladder,
             stop_price=req.stop_price,
@@ -222,16 +215,16 @@ def solve_entry(req: EntrySolveRequest):
         models = {}
         
         models["equal"] = solver.compute_model(
-            model_id="equal", title="EQUAL", subtitle="Flat across ladder", 
-            solver_mode=req.solver_mode, manual_lots=req.equal_lots
+            model_id="equal", title="EQUAL", subtitle="Flat across ladder",
+            manual_lots=req.equal_lots
         )
         models["front_loaded"] = solver.compute_model(
-            model_id="front_loaded", title="FRONT-LOADED", subtitle="Heavier near first entry", 
-            solver_mode=req.solver_mode, manual_lots=req.front_lots
+            model_id="front_loaded", title="FRONT-LOADED", subtitle="Heavier near first entry",
+            manual_lots=req.front_lots
         )
         models["back_loaded"] = solver.compute_model(
-            model_id="back_loaded", title="BACK-LOADED", subtitle="Heavier deeper in ladder", 
-            solver_mode=req.solver_mode, manual_lots=req.back_lots
+            model_id="back_loaded", title="BACK-LOADED", subtitle="Heavier deeper in ladder",
+            manual_lots=req.back_lots
         )
         
         # 4. Compute Dynamic Allocator (RAEM) if bounds are provided
@@ -239,12 +232,12 @@ def solve_entry(req: EntrySolveRequest):
             raem_ladder = LadderGenerator.generate(
                 start_price=req.raem_start,
                 stop_price=req.raem_end,
-                interval=req.interval,
+                interval=req.raem_interval or req.interval,
                 direction=req.direction
             )
             raem_solver = RiskSolver(
                 direction=req.direction,
-                tick_size=contract_spec['tickSize'],
+                tick_size=raem_tick_size,
                 usd_tick_value=contract_spec['usdTickValue'],
                 ladder=raem_ladder,
                 stop_price=req.raem_stop if req.raem_stop is not None else req.stop_price,
@@ -253,13 +246,13 @@ def solve_entry(req: EntrySolveRequest):
             )
             # Use dynamic shape from frontend
             models["raem"] = raem_solver.compute_model(
-                model_id="raem", title="DYNAMIC ALLOCATOR", subtitle="RAEM Auto-Suggested Structure", 
-                solver_mode=req.solver_mode, manual_lots=req.raem_lots, base_shape=req.raem_base_shape or "front_loaded"
+                model_id="raem", title="DYNAMIC ALLOCATOR", subtitle="RAEM Auto-Suggested Structure",
+                manual_lots=req.raem_lots, base_shape=req.raem_base_shape or "front_loaded"
             )
         else:
             models["raem"] = solver.compute_model(
-                model_id="raem", title="DYNAMIC ALLOCATOR", subtitle="Pending Auto-Suggest (Using Base Bounds)", 
-                solver_mode=req.solver_mode, manual_lots=req.raem_lots, base_shape=req.raem_base_shape or "front_loaded"
+                model_id="raem", title="DYNAMIC ALLOCATOR", subtitle="Pending Auto-Suggest (Using Base Bounds)",
+                manual_lots=req.raem_lots, base_shape=req.raem_base_shape or "front_loaded"
             )
             
         return {"status": "success", "models": models}
@@ -269,32 +262,6 @@ def solve_entry(req: EntrySolveRequest):
     except Exception as e:
         logger.error(f"Solve error: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error solving entry.")
-
-@app.post("/api/exit/solve")
-def solve_exit(req: ExitSolveRequest):
-    if req.product not in PRODUCTS:
-        raise HTTPException(status_code=400, detail=f"Unsupported product: {req.product}")
-        
-    contract_spec = PRODUCTS[req.product]
-    planner = ExitPlanner(
-        direction=req.direction,
-        tick_size=contract_spec['tickSize'],
-        usd_tick_value=contract_spec['usdTickValue']
-    )
-    
-    # We pass the models to calculate_exit_for_all_models
-    results = planner.calculate_exit_for_all_models(
-        models=req.entry_models,
-        stop_price=req.stop_price,
-        tp_price=req.tp_price,
-        exit_mode=req.exit_mode,
-        rt_spacing_ticks=req.rt_spacing_ticks,
-        rt_lots_per_band=req.rt_lots_per_band,
-        crossing_override=req.crossing_override,
-        rt_start_price=req.rt_start_price
-    )
-    
-    return {"status": "success", "results": results}
 
 @app.get("/api/config/products")
 def get_products():
@@ -311,6 +278,27 @@ def get_ohlc(contract_code: str):
         raise HTTPException(status_code=404, detail="OHLC not found")
     return {"status": "success", "data": data}
 
+def _tick_size_for_contract(contract_code: str) -> float:
+    """Resolve tick size by matching the contract's QH prefix against products.json.
+    Longest prefix wins so e.g. CLCO (WTI/Brent) is not shadowed by CL (WTI)."""
+    best_prefix = ""
+    tick_size = 0.005
+    for spec in PRODUCTS.values():
+        prefix = spec.get("qhPrefix", "")
+        if prefix and contract_code.startswith(prefix) and len(prefix) > len(best_prefix):
+            best_prefix = prefix
+            tick_size = spec.get("tickSize", 0.005)
+            
+    # SOFR derivative (spreads, condors, etc.) price differences are multiplied by 100.
+    if best_prefix in ("SRA", "SR3") and "-" in contract_code:
+        tick_size = 0.5
+        
+    return tick_size
+
+def _is_sofr_derivative(contract_code: str) -> bool:
+    """Returns true if the contract is a SOFR derivative (contains hyphens)."""
+    return (contract_code.startswith("SRA") or contract_code.startswith("SR3")) and "-" in contract_code
+
 @app.get("/api/auto-suggest/{contract_code}")
 def auto_suggest(contract_code: str, interval: str = "1D", lookback: int = 30):
     try:
@@ -318,17 +306,18 @@ def auto_suggest(contract_code: str, interval: str = "1D", lookback: int = 30):
         series = market_service.fetch_historical_series(contract_code, interval=interval, limit=lookback + 1)
         if not series:
             raise HTTPException(status_code=404, detail="Could not fetch historical series")
-        
-        # Calculate tick size (default 0.005 for STIRs, might need mapping from products.json)
-        # Using 0.005 as a general default if we don't have it mapped explicitly
-        tick_size = 0.005 
-        
-        suggestion = RegimeAnalyzer.generate_suggestion(series, tick_size=tick_size)
+
+        tick_size = _tick_size_for_contract(contract_code)
+        is_sofr_derivative = _is_sofr_derivative(contract_code)
+
+        suggestion = RegimeAnalyzer.generate_suggestion(series, tick_size=tick_size, is_sofr_derivative=is_sofr_derivative)
         if suggestion.get("status") == "error":
             raise HTTPException(status_code=400, detail=suggestion.get("message"))
-            
+
+        suggestion["tick_size"] = tick_size
         return suggestion
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Auto-suggest failed for {contract_code}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-# Trigger reload

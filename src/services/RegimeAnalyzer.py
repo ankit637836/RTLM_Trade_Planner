@@ -34,7 +34,7 @@ class RegimeAnalyzer:
             return 0.5
             
     @staticmethod
-    def generate_suggestion(ohlc_list: List[Dict], tick_size: float = 0.005) -> Dict:
+    def generate_suggestion(ohlc_list: List[Dict], tick_size: float = 0.005, is_sofr_derivative: bool = False) -> Dict:
         """
         Generates RAEM suggestion payload from OHLC data
         """
@@ -115,18 +115,25 @@ class RegimeAnalyzer:
             else:
                 start_anchor_z = -0.5
                 
+            # Net change across the lookback window (first close of the window vs last)
+            bps_change = float(valid_closes.iloc[-1] - valid_closes.iloc[0])
+            if not is_sofr_derivative:
+                bps_change *= 100.0
+
             return {
                 "status": "success",
                 "regime_score": round(rs, 3),
                 "suggested_model": suggested_model,
                 "eme_ticks": eme_ticks,
                 "start_anchor_z": start_anchor_z,
+                "last_close": float(current_price),
                 "metrics": {
                     "hurst": round(hurst, 3),
                     "atr_std_ratio": round(atr_std_ratio, 3),
                     "z_score": round(z_score, 3),
                     "atr": round(atr, 5),
-                    "std": round(std, 5)
+                    "std": round(std, 5),
+                    "bps_change": round(bps_change, 4)
                 }
             }
             

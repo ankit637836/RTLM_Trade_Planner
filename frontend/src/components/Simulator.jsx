@@ -1,8 +1,9 @@
-// frontend/src/components/Simulator.jsx
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import '../styles/ExitPlanner.css';
+import '../styles/Simulator.css';
 
-const Simulator = ({ formData, entryModels, activeSpec }) => {
+const API_URL = import.meta.env.VITE_API_URL || '/api';
+
+const Simulator = ({ formData, entryModels, activeSpec, raemBounds }) => {
   const [selectedModelId, setSelectedModelId] = useState('equal');
   const [exitType, setExitType] = useState('TYPE2');
   const [lowerRatio, setLowerRatio] = useState(3);
@@ -18,7 +19,7 @@ const Simulator = ({ formData, entryModels, activeSpec }) => {
   const [sessionName, setSessionName] = useState('');
 
   useEffect(() => {
-    fetch(`${import.meta.env.VITE_API_URL}/sessions`)
+    fetch(`${API_URL}/sessions`)
       .then(res => res.json())
       .then(data => {
         if(data.status === 'success') setSessions(data.data);
@@ -43,14 +44,14 @@ const Simulator = ({ formData, entryModels, activeSpec }) => {
       }
     };
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/sessions`, {
+      const res = await fetch(`${API_URL}/sessions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
       if(res.ok) {
         alert("Session saved!");
-        const updated = await fetch(`${import.meta.env.VITE_API_URL}/sessions`).then(r => r.json());
+        const updated = await fetch(`${API_URL}/sessions`).then(r => r.json());
         setSessions(updated.data);
         setSessionName('');
       }
@@ -85,7 +86,7 @@ const Simulator = ({ formData, entryModels, activeSpec }) => {
     const selected = sessions.find(s => s.name === sessionName);
     if (!selected) return alert("Select a saved session to delete");
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/sessions/${selected.id}`, { method: 'DELETE' });
+      const res = await fetch(`${API_URL}/sessions/${selected.id}`, { method: 'DELETE' });
       if (res.ok) {
         alert("Session deleted!");
         setSessions(sessions.filter(s => s.id !== selected.id));
@@ -97,7 +98,14 @@ const Simulator = ({ formData, entryModels, activeSpec }) => {
   };
 
   const isBuy = formData.direction === 'BUY';
-  const interval = parseFloat(formData.interval) || 0.005;
+  let interval = parseFloat(formData.interval) || 0.005;
+  if (selectedModelId === 'raem' && raemBounds) {
+    if (raemBounds.tick_size) {
+      interval = parseFloat(raemBounds.tick_size);
+    } else if (raemBounds.interval) {
+      interval = parseFloat(raemBounds.interval);
+    }
+  }
 
   const getPrecision = (tickSize) => {
     if (!tickSize) return 4;
@@ -107,9 +115,16 @@ const Simulator = ({ formData, entryModels, activeSpec }) => {
   const precision = getPrecision(activeSpec?.tickSize);
 
   const tickValue = activeSpec ? parseFloat(activeSpec.usdTickValue) : 12.5;
-  const tpPrice = parseFloat(formData.tp_price);
-  const stopPrice = parseFloat(formData.stop_price) || 0;
-  const startPrice = parseFloat(formData.start_price);
+  let tpPrice = parseFloat(formData.tp_price);
+  let stopPrice = parseFloat(formData.stop_price) || 0;
+  if (selectedModelId === 'raem' && raemBounds) {
+    if (raemBounds.tp_price !== undefined) tpPrice = parseFloat(raemBounds.tp_price);
+    if (raemBounds.stop_price !== undefined) stopPrice = parseFloat(raemBounds.stop_price);
+  }
+  let startPrice = parseFloat(formData.start_price);
+  if (selectedModelId === 'raem' && raemBounds && raemBounds.start_price !== undefined) {
+    startPrice = parseFloat(raemBounds.start_price);
+  }
 
   // Float comparison helper to avoid JS precision issues
   const closeEnough = (a, b) => Math.abs(a - b) < 0.00001;
@@ -312,7 +327,9 @@ const Simulator = ({ formData, entryModels, activeSpec }) => {
     let newState = { ...simState, currentPrice: newPrice };
     
     // Detect Rescue Mode Trigger
-    const isStopHit = isBuy ? newPrice <= stopPrice : newPrice >= stopPrice;
+    const isStopHit = isBuy 
+      ? (newPrice < stopPrice || closeEnough(newPrice, stopPrice))
+      : (newPrice > stopPrice || closeEnough(newPrice, stopPrice));
     if (isStopHit && !newState.isRescueMode && newState.inventory > 0) {
       newState.isRescueMode = true;
       newState.activeBuys = []; // Cancel all remaining buys
@@ -452,14 +469,14 @@ const Simulator = ({ formData, entryModels, activeSpec }) => {
             <div className="rt-input-group">
               <span className="rt-label">ENTRY MODEL</span>
               <div style={{display:'flex', gap:'5px'}}>
-                {modelIds.map(id => (
+                {['equal', 'front_loaded', 'back_loaded', 'raem'].map(id => (
                   <button 
                     key={id}
                     className={`exit-mode-btn ${selectedModelId === id ? 'active' : ''}`}
                     onClick={() => setSelectedModelId(id)}
                     style={{ padding: '4px 8px', fontSize: '11px' }}
                   >
-                    {id.toUpperCase()}
+                    {id === 'raem' ? 'DYNAMIC ALLOCATOR' : id.toUpperCase().replace('_', ' ')}
                   </button>
                 ))}
               </div>

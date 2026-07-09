@@ -9,7 +9,10 @@ load_dotenv()  # Load .env file
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 QH_API_TOKEN = os.getenv("QH_API_TOKEN", "")
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///rtlm.db")
+# PostgreSQL is the only supported database (JSONB columns + ON CONFLICT upserts).
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise ValueError("DATABASE_URL environment variable is not set. DevOps must inject this!")
 LOG_LEVEL_STR = os.getenv("LOG_LEVEL", "INFO").upper()
 
 import logging

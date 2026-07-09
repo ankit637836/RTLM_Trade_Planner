@@ -12,7 +12,6 @@ class Direction(str, Enum):
 class SolverMode(str, Enum):
     """Risk solver mode."""
     EXACT_RISK = "EXACT_RISK"
-    BEST_RR = "BEST_RR"
 
 @dataclass
 class RiskSolverInput:

@@ -5,15 +5,9 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, sessionmaker
 from datetime import datetime
-import os
-from dotenv import load_dotenv
 
-load_dotenv()
-
-# Database URL from environment
-DATABASE_URL = os.getenv("DATABASE_URL")
-if not DATABASE_URL:
-    raise ValueError("DATABASE_URL environment variable is not set. DevOps must inject this!")
+# Single source of truth for the connection string (reads .env, defaults to local PostgreSQL)
+from src.config.settings import DATABASE_URL
 
 # Create engine
 engine = create_engine(DATABASE_URL, echo=False)

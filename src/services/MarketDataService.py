@@ -233,15 +233,39 @@ class MarketDataService:
         logger.info(f"✓ Built metadata for {len(metadata)} contracts")
         return metadata
 
+    @staticmethod
+    def _staleness_threshold_ms() -> int:
+        """
+        How old the latest DB bar may be before we re-ask QuantHub.
+        Daily bars don't update over the weekend: on Sat/Sun/Mon the freshest
+        possible bar is Friday's, so widen the window instead of re-fetching
+        the same history on every request.
+        """
+        weekday = datetime.now().weekday()  # Mon=0 ... Sun=6
+        if weekday == 5:      # Saturday -> Friday bar is up to 2 days old
+            days = 2
+        elif weekday in (6, 0):  # Sunday / Monday -> Friday bar is up to 3 days old
+            days = 3
+        else:
+            days = 1
+        return days * 86400000
+
     def _sync_and_get_db_ohlc(self, contract_code: str, limit: int = 50):
         """
         Helper to fetch and store OHLC in DB to avoid multiple API calls.
         Returns list of OHLCData objects (latest first).
         """
+        owns_session = self.db_session is None
         db_session = self.db_session or SessionLocal()
         if not db_session:
             return []
-            
+        try:
+            return self._sync_and_get_db_ohlc_inner(db_session, contract_code, limit)
+        finally:
+            if owns_session:
+                db_session.close()
+
+    def _sync_and_get_db_ohlc_inner(self, db_session, contract_code: str, limit: int = 50):
         needs_fetch = True
         instrument_id = None
         db_data = []
@@ -282,10 +306,10 @@ class MarketDataService:
                 instrument_id=instrument_id, interval='1D'
             ).order_by(desc(OHLCData.qh_timestamp)).limit(limit).all()
             
-            if len(db_data) >= min(14, limit):
+            if len(db_data) >= min(limit, 14):
                 latest_time = db_data[0].qh_timestamp
-                # If latest data is from today (or last 24h), we have enough
-                if datetime.now().timestamp() * 1000 - latest_time < 86400000:
+                # If the latest bar is recent enough (weekend-aware), the DB history is complete
+                if datetime.now().timestamp() * 1000 - latest_time < self._staleness_threshold_ms():
                     needs_fetch = False
                     logger.debug(f"✓ Using {len(db_data)} cached DB rows for {contract_code}")
 
@@ -297,9 +321,16 @@ class MarketDataService:
                 if response.status_code == 200:
                     data = response.json()
                     if isinstance(data, list) and instrument_id:
-                        from sqlalchemy.dialects.postgresql import insert
-                        for bar in data:
-                            timestamp = int(bar.get('time', 0))
+                        # OHLC history is immutable: only insert bars whose date (timestamp)
+                        # is not already stored, instead of re-writing the whole series.
+                        existing_ts = {
+                            row[0] for row in db_session.query(OHLCData.qh_timestamp)
+                            .filter_by(instrument_id=instrument_id, interval='1D').all()
+                        }
+                        new_bars = [b for b in data if int(b.get('time', 0)) not in existing_ts]
+                        logger.info(f"✓ {contract_code}: {len(data)} bars from QH, {len(new_bars)} new, {len(data) - len(new_bars)} already in DB")
+
+                        for bar in new_bars:
                             stmt = insert(OHLCData).values(
                                 instrument_id=instrument_id,
                                 open_price=float(bar.get('open', 0)),
@@ -307,20 +338,21 @@ class MarketDataService:
                                 low_price=float(bar.get('low', 0)),
                                 close_price=float(bar.get('close', 0)),
                                 volume=int(bar.get('volume', 0) or 0),
-                                qh_timestamp=timestamp,
+                                qh_timestamp=int(bar.get('time', 0)),
                                 interval='1D'
                             ).on_conflict_do_nothing(
                                 index_elements=['instrument_id', 'qh_timestamp', 'interval']
                             )
                             db_session.execute(stmt)
-                        db_session.commit()
-                        
+                        if new_bars:
+                            db_session.commit()
+
                         db_data = db_session.query(OHLCData).filter_by(
                             instrument_id=instrument_id, interval='1D'
                         ).order_by(desc(OHLCData.qh_timestamp)).limit(limit).all()
             except Exception as e:
                 logger.error(f"❌ Error fetching updated OHLC: {str(e)}")
-                
+
         return db_data
 
     def fetch_contract_ohlc(self, contract_code: str) -> Optional[Dict]:
@@ -396,6 +428,9 @@ class MarketDataService:
                 latest_close = float(db_data[0].close_price or 0)
                 historical_close = float(db_data[max_days].close_price or 0)
                 bps_change_14 = latest_close - historical_close
+                is_sofr_derivative = (contract_code.startswith("SRA") or contract_code.startswith("SR3")) and "-" in contract_code
+                if not is_sofr_derivative:
+                    bps_change_14 *= 100.0
 
             ohlc = {
                 "contract": contract_code,
@@ -416,35 +451,6 @@ class MarketDataService:
         except Exception as e:
             logger.error(f"❌ Error fetching OHLC for {contract_code}: {str(e)}")
             return None
-
-    def fetch_contract_volatility(self, contract_code: str) -> Optional[Dict]:
-        """
-        Fetch OHLC data and compute 14-day Volatility Analytics
-        """
-        from .RegimeAnalyzer import RegimeAnalyzer
-        series = self.fetch_historical_series(contract_code, interval="1D", limit=15)
-        if not series or len(series) < 2:
-            return None
-            
-        suggestion = RegimeAnalyzer.generate_suggestion(series)
-        
-        bps_change = series[-1]["close"] - series[0]["close"]
-
-        if suggestion.get("status") == "success":
-            return {
-                "contract": contract_code,
-                "atr_14": round(suggestion["metrics"]["atr"], 4),
-                "std_14": round(suggestion["metrics"]["std"], 4),
-                "atr_std_ratio": round(suggestion["metrics"]["atr_std_ratio"], 2),
-                "bps_change_14": round(bps_change, 2),
-                "hurst": suggestion["metrics"]["hurst"],
-                "z_score": suggestion["metrics"]["z_score"],
-                "regime_score": suggestion["regime_score"],
-                "suggested_model": suggestion["suggested_model"],
-                "fetch_time": datetime.now().isoformat()
-            }
-            
-        return None
 
     def fetch_historical_series(self, contract_code: str, interval: str = "1D", limit: int = 30) -> List[Dict]:
         """
@@ -579,14 +585,11 @@ class MarketDataService:
 
     def get_contract_ohlc(self, code: str) -> Optional[Dict]:
         """
-        Get OHLC data for a contract (from cache or fetch)
-        Returns: {contract, open, high, low, close, timestamp, volume}
+        Get OHLC data for a contract.
+        Always resolves through the DB-backed sync (cheap when the DB is fresh),
+        so a REFRESH from the UI actually re-evaluates freshness instead of
+        returning a never-expiring in-memory copy.
         """
-        # Check cache first
-        if code in self.ohlc_cache:
-            return self.ohlc_cache[code]
-        
-        # Fetch if not in cache
         return self.fetch_contract_ohlc(code)
 
     def get_cache_status(self) -> Dict:

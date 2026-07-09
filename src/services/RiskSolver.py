@@ -79,54 +79,7 @@ class RiskSolver:
             
         return best_lots
 
-    def _solve_best_rr(self, weights: List[int]) -> List[int]:
-        lots = [0] * len(weights)
-        current_risk = 0.0
-        
-        # Calculate efficiency (reward per unit of risk)
-        efficiency = []
-        for i in range(len(weights)):
-            r_per_lot = self.risk_per_lot[i] if self.risk_per_lot[i] > 0 else 1.0
-            eff = self.reward_per_lot[i] / r_per_lot
-            efficiency.append({'idx': i, 'eff': eff})
-            
-        # Sort by efficiency descending
-        efficiency.sort(key=lambda x: x['eff'], reverse=True)
-        
-        # Add lots to most efficient levels first
-        added = True
-        while added:
-            added = False
-            for item in efficiency:
-                idx = item['idx']
-                if weights[idx] > 0 and current_risk + self.risk_per_lot[idx] <= self.target_risk + 10:
-                    lots[idx] += 1
-                    current_risk += self.risk_per_lot[idx]
-                    added = True
-                    break
-                    
-        # Try to swap inefficient lots for efficient ones
-        swapped = True
-        while swapped:
-            swapped = False
-            for i in range(len(efficiency) - 1, -1, -1):
-                worst_idx = efficiency[i]['idx']
-                if lots[worst_idx] > 0:
-                    for j in range(i):
-                        best_idx = efficiency[j]['idx']
-                        if current_risk - self.risk_per_lot[worst_idx] + self.risk_per_lot[best_idx] <= self.target_risk + 10:
-                            lots[worst_idx] -= 1
-                            lots[best_idx] += 1
-                            current_risk = current_risk - self.risk_per_lot[worst_idx] + self.risk_per_lot[best_idx]
-                            swapped = True
-                            break
-                    if swapped:
-                        break
-                        
-        return lots
-
-    def compute_model(self, model_id: str, title: str, subtitle: str, 
-                     solver_mode: str = "EXACT_RISK", 
+    def compute_model(self, model_id: str, title: str, subtitle: str,
                      manual_lots: Optional[List[int]] = None,
                      base_shape: Optional[str] = None) -> Dict:
         n = len(self.ladder)
@@ -145,12 +98,9 @@ class RiskSolver:
                 weights = self._back_weights(n)
             else:
                 weights = self._equal_weights(n)
-                
-            if solver_mode == "BEST_RR":
-                lots = self._solve_best_rr(weights)
-            else:
-                lots = self._solve_integer_lots(weights)
-                
+
+            lots = self._solve_integer_lots(weights)
+
         total_lots = sum(lots)
         total_risk = sum(l * r for l, r in zip(lots, self.risk_per_lot))
         total_reward = sum(l * r for l, r in zip(lots, self.reward_per_lot))
@@ -164,6 +114,10 @@ class RiskSolver:
             "subtitle": subtitle,
             "lots": lots,
             "ladder": self.ladder,
+            # Bounds this model was solved against (RAEM uses its own, market-derived
+            # bounds — the UI must render each model against these, not the form inputs)
+            "stop_price": self.stop_price,
+            "tp_price": self.tp_price,
             "total_lots": total_lots,
             "total_risk": total_risk,
             "total_reward": total_reward,

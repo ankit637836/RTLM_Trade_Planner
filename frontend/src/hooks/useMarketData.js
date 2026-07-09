@@ -74,24 +74,6 @@ export function useMarketData() {
     return allContracts.filter(c => c.product === productCode);
   }, [allContracts]);
 
-  const fetchVolatilityData = useCallback(async (contractCode) => {
-    if (!contractCode) return null;
-    
-    try {
-      const response = await fetch(`${API_URL}/market/volatility/${contractCode}`);
-      if (!response.ok) throw new Error('Volatility data fetch failed');
-      
-      const data = await response.json();
-      if (data.status === 'success' && data.data) {
-        return data.data;
-      }
-      return null;
-    } catch (err) {
-      console.error(err);
-      return null;
-    }
-  }, []);
-
   return {
     allContracts,
     currentOHLC,
@@ -99,7 +81,6 @@ export function useMarketData() {
     error,
     fetchContractsList,
     fetchContractOHLC,
-    getContractsByProduct,
-    fetchVolatilityData
+    getContractsByProduct
   };
 }

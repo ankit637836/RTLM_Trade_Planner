@@ -4,8 +4,8 @@
 
 
 
-# Solver modes
-SOLVER_MODES = ["EXACT_RISK", "BEST_RR"]
+# Solver modes (EXACT_RISK is the only supported mode)
+SOLVER_MODES = ["EXACT_RISK"]
 DIRECTIONS = ["BUY", "SELL"]
 VOLATILITY_LEVELS = ["LOW", "MED", "HIGH"]
 

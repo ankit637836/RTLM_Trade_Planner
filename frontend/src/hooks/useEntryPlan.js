@@ -24,7 +24,6 @@ export function useEntryPlan() {
         volatility: params.volatility || 'MED',
         target_risk: parseFloat(params.target_risk),
         tolerance_pct: parseFloat(params.tolerance_pct) || 5.0,
-        solver_mode: params.solver_mode || 'EXACT_RISK',
         equal_lots: params.equalLots || null,
         front_lots: params.frontLots || null,
         back_lots: params.backLots || null,
@@ -33,7 +32,11 @@ export function useEntryPlan() {
         raem_end: params.raemBounds ? parseFloat(params.raemBounds.end_price) : null,
         raem_stop: params.raemBounds ? parseFloat(params.raemBounds.stop_price) : null,
         raem_tp: params.raemBounds ? parseFloat(params.raemBounds.tp_price) : null,
-        raem_base_shape: params.raemBaseShape || 'front_loaded'
+        raem_interval: params.raemBounds?.interval ? parseFloat(params.raemBounds.interval) : null,
+        raem_base_shape: params.raemBaseShape || 'front_loaded',
+        contract_code: params.contract_code || null,
+        tick_size: params.interval ? (parseFloat(params.interval) / (parseFloat(params.interval_multiplier) || 1)) : null,
+        raem_tick_size: params.raemBounds?.tick_size ? parseFloat(params.raemBounds.tick_size) : null
       };
 
       const response = await fetch(`${API_URL}/entry/solve`, {

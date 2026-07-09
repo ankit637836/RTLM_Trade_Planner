@@ -4,12 +4,10 @@ import './App.css';
 
 import Sidebar from './components/Sidebar';
 import EntryPlanner from './components/EntryPlanner';
-import ExitPlanner from './components/ExitPlanner';
 import Simulator from './components/Simulator';
 import MarketData from './components/MarketData';
 
 import { useEntryPlan } from './hooks/useEntryPlan';
-import { useExitPlan } from './hooks/useExitPlan';
 import { useMarketData } from './hooks/useMarketData';
 
 function App() {
@@ -27,8 +25,7 @@ function App() {
     interval_multiplier: 1,
     target_risk: 1500,
     target_reward: 1500,
-    tolerance_pct: 5.0,
-    solver_mode: "EXACT_RISK"
+    tolerance_pct: 5.0
   });
 
   const [entryModels, setEntryModels] = useState(null);
@@ -38,7 +35,6 @@ function App() {
   const [raemLots, setRaemLots] = useState(null);
   const [raemBounds, setRaemBounds] = useState(null);
   const [raemBaseShape, setRaemBaseShape] = useState(null);
-  const [raemMetrics, setRaemMetrics] = useState(null);
 
   const { solveEntryLadder, fetchAutoSuggestion, loading: entryLoading, error: entryError } = useEntryPlan();
 
@@ -47,10 +43,9 @@ function App() {
     allContracts, 
     currentOHLC: headerOHLC, 
     error: headerError,
-    fetchContractsList, 
+    fetchContractsList,
     fetchContractOHLC: fetchHeaderOHLC,
-    getContractsByProduct,
-    fetchVolatilityData
+    getContractsByProduct
   } = useMarketData();
 
   useEffect(() => {
@@ -131,7 +126,8 @@ function App() {
         try {
           const models = await solveEntryLadder({ 
             ...formData, 
-            equalLots, frontLots, backLots, raemLots, raemBounds, raemBaseShape 
+            equalLots, frontLots, backLots, raemLots, raemBounds, raemBaseShape,
+            contract_code: frontContractCode
           });
           setEntryModels(models);
         } catch(e) {
@@ -227,19 +223,16 @@ function App() {
       <div className="app-body">
         {/* LEFT COLUMN: SIDEBAR */}
         <div className="sidebar">
-          <Sidebar 
-            formData={formData} 
-            setFormData={setFormData} 
+          <Sidebar
+            formData={formData}
+            setFormData={setFormData}
             PRODUCTS={productsMap}
             allContracts={allContracts}
-            fetchVolatilityData={fetchVolatilityData}
             frontContractCode={frontContractCode}
             fetchAutoSuggestion={fetchAutoSuggestion}
-            headerOHLC={headerOHLC}
             setRaemBounds={setRaemBounds}
             setRaemLots={setRaemLots}
             setRaemBaseShape={setRaemBaseShape}
-            setRaemMetrics={setRaemMetrics}
           />
         </div>
 
@@ -260,27 +253,19 @@ function App() {
                 error={entryError} 
                 onUpdateEqualLots={setEqualLots} 
                 onUpdateFrontLots={setFrontLots} 
-                onUpdateBackLots={setBackLots} 
-                onUpdateRaemLots={setRaemLots} 
-                raemMetrics={raemMetrics}
+                onUpdateBackLots={setBackLots}
+                onUpdateRaemLots={setRaemLots}
                 activeSpec={activeSpec}
                 headerOHLC={headerOHLC}
               />
             </div>
             
-            <div style={{ display: activeTab === 'exit' ? 'block' : 'none', height: '100%' }}>
-              <ExitPlanner 
-                formData={formData}
-                entryModels={entryModels}
-                activeSpec={activeSpec}
-              />
-            </div>
-
             <div style={{ display: activeTab === 'simulator' ? 'block' : 'none', height: '100%' }}>
               <Simulator 
-                formData={formData}
-                entryModels={entryModels}
-                activeSpec={activeSpec}
+                formData={formData} 
+                entryModels={entryModels} 
+                activeSpec={productsMap ? productsMap[formData.product] : null} 
+                raemBounds={raemBounds}
               />
             </div>
             
