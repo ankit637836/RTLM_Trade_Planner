@@ -2,6 +2,7 @@
 
 from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, DateTime, BigInteger, ForeignKey, Numeric, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.types import JSON
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, sessionmaker
 from datetime import datetime
@@ -10,8 +11,12 @@ from datetime import datetime
 from src.config.settings import DATABASE_URL
 
 # Create engine
-engine = create_engine(DATABASE_URL, echo=False)
+connect_args = {"check_same_thread": False} if "sqlite" in DATABASE_URL else {}
+engine = create_engine(DATABASE_URL, echo=False, connect_args=connect_args)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+def get_json_type():
+    return JSONB if "postgres" in DATABASE_URL else JSON
 
 Base = declarative_base()
 
@@ -125,7 +130,7 @@ class UserTemplate(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100), nullable=False)
     template_type = Column(String(20), nullable=False)  # 'ENTRY' or 'EXIT'
-    payload = Column(JSONB, nullable=False)
+    payload = Column(get_json_type(), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -139,7 +144,7 @@ class SimSession(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100), nullable=False)
-    state_payload = Column(JSONB, nullable=False)
+    state_payload = Column(get_json_type(), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

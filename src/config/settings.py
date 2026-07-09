@@ -9,10 +9,10 @@ load_dotenv()  # Load .env file
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 QH_API_TOKEN = os.getenv("QH_API_TOKEN", "")
-# PostgreSQL is the only supported database (JSONB columns + ON CONFLICT upserts).
+# PostgreSQL is preferred, but fallback to SQLite if not provided (e.g., on Vercel)
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
-    raise ValueError("DATABASE_URL environment variable is not set. DevOps must inject this!")
+    DATABASE_URL = "sqlite:////tmp/rtlm_mock.db"
 LOG_LEVEL_STR = os.getenv("LOG_LEVEL", "INFO").upper()
 
 import logging

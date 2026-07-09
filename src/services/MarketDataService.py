@@ -10,7 +10,6 @@ import logging
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 import json
-from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy import desc
 from src.models.database import OHLCData, Instrument, MarketMetric, Product, SessionLocal
 
@@ -331,7 +330,7 @@ class MarketDataService:
                         logger.info(f"✓ {contract_code}: {len(data)} bars from QH, {len(new_bars)} new, {len(data) - len(new_bars)} already in DB")
 
                         for bar in new_bars:
-                            stmt = insert(OHLCData).values(
+                            db_session.add(OHLCData(
                                 instrument_id=instrument_id,
                                 open_price=float(bar.get('open', 0)),
                                 high_price=float(bar.get('high', 0)),
@@ -340,10 +339,7 @@ class MarketDataService:
                                 volume=int(bar.get('volume', 0) or 0),
                                 qh_timestamp=int(bar.get('time', 0)),
                                 interval='1D'
-                            ).on_conflict_do_nothing(
-                                index_elements=['instrument_id', 'qh_timestamp', 'interval']
-                            )
-                            db_session.execute(stmt)
+                            ))
                         if new_bars:
                             db_session.commit()
 
